@@ -1,5 +1,9 @@
 # Oribay Intelligence
 
+## Apariencia corporativa
+
+La interfaz usa la paleta, tipografía Roboto y logotipo oficial de Oribay Group en `static/corporate-theme.css` y `static/oribay-logo.png`. La revisión de Cloud Run `oribay-intelligence-pilot-00088-jas` se publicó el 23/11/2026. El cambio es visual: conserva el enrutador, las conversaciones, las herramientas y las animaciones del chat.
+
 ## Estado actual: dos agentes de datos
 
 El chat consulta Ventas Oribay (`agent_33fe6cdf-ec2d-4cd8-93c7-a5c87fc4c345`) y Aplicación Adhesiva (`oee-oribay`) con el OAuth personal del usuario. El router Gemini elige el agente según la petición; PDF y borradores de correo usan el agente elegido. Cada respuesta conserva su origen y el contexto enviado a Conversational Analytics se separa por agente. El mismo chat permite pasar de OEE a facturación. Las alertas programadas siguen disponibles solo para ventas; una alerta de producción se rechaza sin guardar una regla.
