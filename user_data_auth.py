@@ -304,6 +304,39 @@ def _extract_result(value, question=""):
     return {"answer": "\n\n".join(final_answers or answer), "tables": tables[:8], "sql": sql[:8], "charts": charts[:8]}
 
 
+def list_data_agents_as_user(owner):
+    """Discover agents visible to the connected user; the data API still enforces access."""
+    token = user_access_token(owner)
+    with requests.Session() as session:
+        headers = {
+            "Authorization": f"Bearer {token}", "Content-Type": "application/json",
+            "Accept": "application/json, text/event-stream",
+            "MCP-Protocol-Version": "2025-03-26",
+        }
+        initialized, response_headers = _mcp_call(session, headers, 1, "initialize", {
+            "protocolVersion": "2025-03-26", "capabilities": {},
+            "clientInfo": {"name": "oribay-intelligence", "version": "1.0.0"},
+        })
+        if response_headers.get("Mcp-Session-Id"):
+            headers["Mcp-Session-Id"] = response_headers["Mcp-Session-Id"]
+        headers["MCP-Protocol-Version"] = initialized.get("protocolVersion", "2025-03-26")
+        if headers.get("Mcp-Session-Id"):
+            session.post(MCP_URL, headers=headers, json={"jsonrpc": "2.0", "method": "notifications/initialized"}, timeout=15)
+        listed, _ = _mcp_call(session, headers, 2, "tools/list")
+        tool = next((item for item in listed.get("tools", []) if item.get("name") == "list_data_agents"), None)
+        if not tool:
+            raise UserBigQueryAuthError("No se pudo comprobar qué agentes tienes disponibles.")
+        schema = (tool.get("inputSchema") or {}).get("properties", {})
+        args = {"parent": "projects/aad-analitica-oee/locations/eu"}
+        args = {key: value for key, value in args.items() if key in schema}
+        result, _ = _mcp_call(session, headers, 3, "tools/call", {"name": "list_data_agents", "arguments": args})
+        raw = json.dumps(result, ensure_ascii=False)
+        for item in result.get("content", []):
+            if isinstance(item, dict) and isinstance(item.get("text"), str):
+                raw += " " + item["text"]
+        return [name for name, resource in DATA_AGENTS.items() if resource in raw]
+
+
 def query_data_agent_as_user(owner, question, chart_request="", history=None, agent="ventas"):
     if agent not in DATA_AGENTS:
         raise ValueError("Agente de datos no permitido")

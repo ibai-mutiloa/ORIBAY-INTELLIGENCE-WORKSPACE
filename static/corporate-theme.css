@@ -98,7 +98,16 @@ main>header span { color: var(--oribay-text-muted); border-color: var(--oribay-b
 .library-status { border-radius: 4px; }
 .space-search { border-color: var(--oribay-input-border); border-radius: 6px; }
 .actions button, .drive-connect, .drive-action, .drive-controls button { border-radius: 5px; }
-button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visible { outline: 2px solid var(--oribay-amber); outline-offset: 2px; }
+button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visible { outline: 2px solid var(--oribay-blue); outline-offset: 2px; }
+.composer textarea:focus-visible { outline: none; }
+.composer form:focus-within { border-color: var(--oribay-blue); box-shadow: 0 5px 22px #00338a18, 0 0 0 2px #d8e8ff; }
+.prompts button[hidden] { display: none; }
+.prompts[hidden] { display: none; }
+.answer-heading { color: var(--oribay-blue-dark); line-height: 1.3; margin: 1.15em 0 .35em; }
+.answer h2.answer-heading { font-size: 1.28rem; }
+.answer h3.answer-heading { font-size: 1.08rem; }
+.answer-paragraph { margin: .45em 0 .85em; }
+.analysis-title { color: var(--oribay-blue-dark); font-size: 1.2rem; margin: 1.1em 0 .45em; }
 
 @media (max-width: 980px) { .header-brand { display: none; } }
 @media (max-width: 720px) {

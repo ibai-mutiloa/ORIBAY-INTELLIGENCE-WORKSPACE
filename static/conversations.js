@@ -5,17 +5,25 @@
   const refreshButton = document.querySelector('#history-refresh');
   const titleElement = document.querySelector('#chat-title');
   const introTemplate = document.querySelector('#intro')?.cloneNode(true);
+  document.querySelector('#intro .prompts')?.setAttribute('hidden', '');
   const backdrop = document.querySelector('#sidebar-backdrop');
   let activeId = null;
   let activeTitle = '';
   let salesHistory = [];
+  let accessibleAgents = [];
 
   function formattedAnswer(value) {
     const root = make('div', 'answer');
     for (const block of String(value || '').trim().split(/\n\s*\n/)) {
       if (!block.trim()) continue;
+      const heading = block.match(/^(#{1,3})\s+([^\n]+)(?:\n([\s\S]*))?$/);
+      if (heading) {
+        const level = Math.min(heading[1].length + 1, 4);
+        root.append(make('h' + level, 'answer-heading', heading[2].replace(/\*\*/g, '')));
+        if (!heading[3]?.trim()) continue;
+      }
       const paragraph = make('p', 'answer-paragraph');
-      const cleaned = block.replace(/^#{1,4}\s+/gm, '');
+      const cleaned = heading ? heading[3] : block;
       const pieces = cleaned.split(/(\*\*[^*]+\*\*)/g);
       for (const piece of pieces) {
         if (piece.startsWith('**') && piece.endsWith('**')) paragraph.append(make('strong', '', piece.slice(2, -2)));
@@ -43,13 +51,37 @@
   function showWelcome() {
     const intro = introTemplate?.cloneNode(true);
     if (!intro) return;
-    intro.querySelectorAll('[data-prompt]').forEach(button => {
+    intro.querySelectorAll('[data-prompt]').forEach((button, index) => {
+      const allowed = index === 1 ? accessibleAgents.includes('adhesiva')
+        : accessibleAgents.includes('ventas') || (index === 2 || index === 4) && accessibleAgents.includes('adhesiva');
+      button.hidden = !allowed;
       button.addEventListener('click', () => {
         workspaceInput.value = button.dataset.prompt;
         workspaceInput.focus();
       });
     });
+    intro.querySelector('.prompts')?.removeAttribute('hidden');
+    if (!accessibleAgents.length) {
+      intro.querySelector('.prompts')?.append(make('p', 'notice', 'Conecta Google para ver las consultas disponibles para tu cuenta.'));
+    }
     workspaceChat.replaceChildren(intro);
+  }
+
+  async function refreshAgentPrompts() {
+    try {
+      const data = await api('/api/agents/available');
+      accessibleAgents = Array.isArray(data.agents) ? data.agents : [];
+    } catch { accessibleAgents = []; }
+    if (!activeId && !workspaceChat.hidden && workspaceChat.querySelector('#intro')) showWelcome();
+  }
+
+  async function summarizeOnLeave() {
+    if (!activeId) return;
+    const id = activeId;
+    try {
+      await api(`/api/conversations/${encodeURIComponent(id)}/summary`, { method: 'POST', body: '{}' });
+      await refreshHistory();
+    } catch { /* A failed synopsis must not interrupt navigation. */ }
   }
 
   function dateLabel(value) {
@@ -133,9 +165,9 @@
         const row = make('div', 'conversation-row' + (item.id === activeId ? ' active' : ''));
         const open = make('button', 'conversation-open');
         open.type = 'button';
-        open.setAttribute('aria-label', `Abrir conversación: ${item.title}`);
-        const label = make('span', 'conversation-title', item.title || 'Nueva conversación');
-        const meta = make('span', 'conversation-meta', item.preview || dateLabel(item.updated_at));
+        open.setAttribute('aria-label', `Abrir conversación: ${item.summary || item.title}`);
+        const label = make('span', 'conversation-title', item.id === activeId ? item.title : item.summary || item.title || 'Nueva conversación');
+        const meta = make('span', 'conversation-meta', dateLabel(item.updated_at));
         open.append(label, meta);
         open.addEventListener('click', () => openConversation(item.id));
         const remove = make('button', 'conversation-delete', '×');
@@ -163,6 +195,7 @@
   }
 
   function startNewChat() {
+    void summarizeOnLeave();
     activeId = null;
     activeTitle = '';
     salesHistory = [];
@@ -186,7 +219,12 @@
     if (message.route === 'drive') stage(trace, serviceIcon('drive'), 'Google Drive', message.answer || 'Acción preparada', 'done');
     if (message.route === 'correo') stage(trace, serviceIcon('gmail'), 'Gmail', 'Borrador de correo', 'done');
     card.append(trace);
-    if (message.answer) card.append(formattedAnswer(message.answer));
+    if (message.answer) {
+      if (['ventas', 'adhesiva'].includes(message.route) && !/^\s*#{1,3}\s/m.test(message.answer)) {
+        card.append(make('h2', 'analysis-title', message.route === 'adhesiva' ? 'Análisis de producción' : 'Análisis de ventas'));
+      }
+      card.append(formattedAnswer(message.answer));
+    }
     if (message.email_invalid) card.append(make('p', 'notice', 'El borrador anterior se ha ocultado porque la consulta de ventas no obtuvo datos verificables. Vuelve a pedir el correo para generar uno nuevo.'));
     for (const spec of message.charts || []) {
       const chart = make('div', 'chart');
@@ -256,6 +294,7 @@
 
   async function openConversation(id) {
     try {
+      if (activeId && activeId !== id) void summarizeOnLeave();
       const data = await api(`/api/conversations/${encodeURIComponent(id)}`);
       activeId = data.id;
       activeTitle = data.title || 'Nuevo chat';
@@ -317,7 +356,12 @@
         const row = stage(run, stepIcons[item.name] || '✦', item.name, item.detail || 'Paso completado', item.status === 'error' ? 'error' : 'done');
         row.style.animationDelay = `${index * 90}ms`;
       });
-      if (data.answer) card.append(formattedAnswer(data.answer));
+      if (data.answer) {
+        if (['ventas', 'adhesiva'].includes(data.route) && !/^\s*#{1,3}\s/m.test(data.answer)) {
+          card.append(make('h2', 'analysis-title', data.route === 'adhesiva' ? 'Análisis de producción' : 'Análisis de ventas'));
+        }
+        card.append(formattedAnswer(data.answer));
+      }
       if (data.route === 'alerta') showAlert(card, data.plan);
       for (const spec of data.charts || []) {
         const chart = make('div', 'chart');
@@ -347,11 +391,20 @@
     }
   };
 
+  workspaceInput.addEventListener('keydown', event => {
+    if (event.key === 'Enter' && !event.shiftKey && !event.isComposing && !event.repeat) {
+      event.preventDefault();
+      if (!workspaceSend.disabled) workspaceForm.requestSubmit();
+    }
+  });
+
   newChatButton.addEventListener('click', startNewChat);
+  document.querySelector('nav [data-view="space"]')?.addEventListener('click', () => { void summarizeOnLeave(); });
   refreshButton.addEventListener('click', refreshHistory);
   document.querySelector('#sidebar-toggle')?.addEventListener('click', () => document.querySelector('.layout').classList.toggle('sidebar-open'));
   backdrop?.addEventListener('click', closeSidebar);
   refreshHistory();
+  refreshAgentPrompts();
 })();
 
 

@@ -186,6 +186,34 @@ def draft_business_email(user_request: str, verified_answer: str, suggested_subj
     return {"subject": suggested_subject or "Resumen comercial Oribay", "body": verified_answer[:30000]}
 
 
+def summarize_conversation(turns: list[dict]) -> str:
+    """A short sidebar synopsis of the discussion, without adding facts."""
+    evidence = [{"question": str(t.get("question", ""))[:500],
+                 "answer": str(t.get("answer", ""))[:900]} for t in turns[-6:]]
+    if not evidence:
+        return ""
+    fallback = re.sub(r"\s+", " ", evidence[-1]["question"]).strip()[:100]
+    try:
+        token = os.environ.get("ORIBAY_TEST_ACCESS_TOKEN")
+        client = Client(vertexai=True, project="aad-analitica-oee", location="global",
+                        credentials=Credentials(token=token) if token else None)
+        response = client.models.generate_content(
+            model=os.environ.get("ORIBAY_ROUTER_MODEL", "gemini-2.5-flash"),
+            contents=json.dumps(evidence, ensure_ascii=False),
+            config=types.GenerateContentConfig(
+                system_instruction=("Resume el tema real de esta conversación en una frase breve en español, "
+                                    "de 6 a 14 palabras. No copies literalmente la primera pregunta. "
+                                    "No inventes cifras ni conclusiones. Devuelve solo la frase, sin comillas."),
+                temperature=0.1,
+            ),
+        )
+        summary = re.sub(r"\s+", " ", (response.text or "")).strip().strip('"“”')
+        return summary[:120] if summary else fallback
+    except Exception as exc:
+        logging.getLogger(__name__).warning("Resumen de conversación no disponible: %s", exc)
+        return fallback
+
+
 def draft_pdf_analysis(user_request: str, verified_answer: str, verified_tables: list | None = None, data_agent="ventas") -> str:
     """Write a decision-ready Spanish analysis using only the sales agent's evidence."""
     evidence = {

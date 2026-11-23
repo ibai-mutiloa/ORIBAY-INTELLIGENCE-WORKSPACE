@@ -29,9 +29,9 @@ from reportlab.lib.enums import TA_CENTER
 from reportlab.lib.units import mm
 from email.message import EmailMessage
 from googleapiclient.discovery import build
-from router import decide, draft_business_email, draft_pdf_analysis, answer_from_drive
+from router import decide, draft_business_email, draft_pdf_analysis, answer_from_drive, summarize_conversation
 from user_data_auth import (UserBigQueryAuthError, begin_oauth, disconnect_oauth,
-                            finish_oauth, is_connected, query_data_agent_as_user, _redirect_uri)
+                            finish_oauth, is_connected, query_data_agent_as_user, list_data_agents_as_user, _redirect_uri)
 from user_data_auth import drive_is_connected
 import drive_tools
 
@@ -697,10 +697,40 @@ def conversations_list():
         if item.get("deleted"):
             continue
         items.append({"id": snapshot.id, "title": item.get("title", "Nueva conversación"),
-                      "preview": item.get("preview", ""), "updated_at": item.get("updated_at", ""),
+                      "summary": item.get("summary", ""), "preview": item.get("preview", ""), "updated_at": item.get("updated_at", ""),
                       "message_count": item.get("message_count", 0)})
     items.sort(key=lambda item: item.get("updated_at", ""), reverse=True)
     return jsonify(items=items[:100])
+
+
+@app.get("/api/agents/available")
+def available_agents():
+    try:
+        return jsonify(agents=list_data_agents_as_user(current_owner()))
+    except Exception:
+        app.logger.warning("No se pudo descubrir los agentes del usuario", exc_info=True)
+        return jsonify(agents=[], error="No se pudieron comprobar los agentes disponibles.")
+
+
+@app.post("/api/conversations/<conversation_id>/summary")
+def conversation_summary(conversation_id):
+    ref, conversation = owned_conversation(conversation_id)
+    if ref is None:
+        return jsonify(error="No se encontró esta conversación."), 404
+    messages = [snapshot.to_dict() for snapshot in ref.collection("messages").order_by("created_at").stream()]
+    turns, question = [], ""
+    for message in messages:
+        if message.get("kind") == "user":
+            question = str(message.get("question", ""))
+        elif question and message.get("kind") == "assistant":
+            if message.get("route") != "error":
+                turns.append({"question": question, "answer": message.get("answer", "")})
+            question = ""
+    if not turns:
+        return jsonify(summary=conversation.get("summary", ""))
+    summary = summarize_conversation(turns)
+    ref.update({"summary": summary})
+    return jsonify(summary=summary)
 
 
 @app.post("/api/conversations")
@@ -946,9 +976,17 @@ def pdf():
     styles.add(ParagraphStyle(name="ReportTableHeader", parent=styles["ReportTableCell"], fontName="Helvetica-Bold", textColor=colors.HexColor("#183153")))
     doc = SimpleDocTemplate(output, pagesize=A4, rightMargin=21*mm, leftMargin=21*mm, topMargin=21*mm, bottomMargin=19*mm, title=title, author="Oribay Intelligence", subject=question[:250])
     import html
-    story = [Spacer(1, 8*mm), Paragraph(html.escape(title), styles["ReportTitle"]),
+    logo_path = os.path.join(os.path.dirname(__file__), "static", "oribay-logo.png")
+    story = []
+    if os.path.isfile(logo_path):
+        logo_width, logo_height = ImageReader(logo_path).getSize()
+        max_logo_width, max_logo_height = 40*mm, 14*mm
+        scale = min(max_logo_width/logo_width, max_logo_height/logo_height)
+        story.extend([Image(logo_path, width=logo_width*scale, height=logo_height*scale), Spacer(1, 7*mm)])
+    story.extend([Paragraph("ORIBAY GROUP  /  INTELLIGENCE WORKSPACE", styles["ReportMeta"]),
+             Spacer(1, 4*mm), Paragraph(html.escape(title), styles["ReportTitle"]),
              Paragraph("ANÁLISIS  ·  " + source_name.upper(), styles["ReportSubtitle"]),
-             Spacer(1, 2*mm), Paragraph(f"Preparado el {datetime.now().astimezone().strftime('%d/%m/%Y · %H:%M')}", styles["ReportMeta"])]
+             Spacer(1, 2*mm), Paragraph(f"Preparado el {datetime.now().astimezone().strftime('%d/%m/%Y · %H:%M')}", styles["ReportMeta"])])
     if question:
         story.extend([Spacer(1, 4*mm), Paragraph("SOLICITUD", styles["ReportMeta"]), Paragraph(html.escape(question), styles["ReportBody"])])
     story.append(Spacer(1, 5*mm))
@@ -1032,7 +1070,7 @@ def pdf():
             except Exception:
                 app.logger.warning("Se omitió un gráfico no válido del PDF")
     def footer(page_canvas, document):
-        page_canvas.saveState(); page_canvas.setStrokeColor(colors.HexColor("#dce4ee")); page_canvas.line(21*mm,15*mm,A4[0]-21*mm,15*mm); page_canvas.setFont("Helvetica",8); page_canvas.setFillColor(colors.HexColor("#7a8797")); page_canvas.drawString(21*mm,10*mm,"Oribay Intelligence  ·  Fuente: " + source_name); page_canvas.drawRightString(A4[0]-21*mm,10*mm,f"{document.page}"); page_canvas.restoreState()
+        page_canvas.saveState(); page_canvas.setStrokeColor(colors.HexColor("#00338a")); page_canvas.setLineWidth(1.2); page_canvas.line(21*mm,15*mm,A4[0]-21*mm,15*mm); page_canvas.setFont("Helvetica",8); page_canvas.setFillColor(colors.HexColor("#526b89")); page_canvas.drawString(21*mm,10*mm,"ORIBAY GROUP  ·  Fuente: " + source_name); page_canvas.drawRightString(A4[0]-21*mm,10*mm,f"{document.page}"); page_canvas.restoreState()
     doc.build(story, onFirstPage=footer, onLaterPages=footer)
     output.seek(0)
     pdf_bytes = output.getvalue()
