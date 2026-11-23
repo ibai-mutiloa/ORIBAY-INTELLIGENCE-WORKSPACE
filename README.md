@@ -4,7 +4,7 @@
 
 El panel «Tu espacio» permite buscar archivos de Drive con la cuenta del usuario, leer Google Docs, PDF, CSV y texto, crear carpetas, renombrar y mover archivos, y guardar los PDF de la biblioteca. Los cambios requieren confirmación. Los demás formatos se abren en Drive. La acción «Usar en el chat» inserta un extracto visible y editable en la caja de conversación.
 
-Esta integración está en el repositorio, **pendiente de despliegue y de autorización real**. El OAuth personal solicita además el ámbito `https://www.googleapis.com/auth/drive`; los usuarios deberán volver a conectar Google desde el enlace del sitio. Hay que comprobar que Drive API esté habilitada en `aad-analitica-oee` y que la pantalla de consentimiento interna permita el nuevo ámbito. La sesión de `gcloud` usada durante el desarrollo caducó antes de desplegar esta versión. No se ha probado con archivos reales.
+Esta integración se desplegó en Cloud Run en la revisión `oribay-intelligence-pilot-00071-sbt`. Drive API está habilitada en `aad-analitica-oee`. El OAuth personal solicita además el ámbito `https://www.googleapis.com/auth/drive`; los usuarios deberán volver a conectar Google desde el enlace del sitio. Queda por comprobar el consentimiento con una cuenta real y las operaciones con archivos reales.
 
 Desplegado en Cloud Run. El servicio `oribay-intelligence-pilot` ejecuta la app con IAP y almacén privado; `oribay-alerts-worker` procesa alertas programadas.
 
