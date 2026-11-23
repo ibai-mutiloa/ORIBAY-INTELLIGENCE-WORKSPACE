@@ -45,6 +45,23 @@ async function showDriveAction(card, data) {
   const json = value => ({method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({...value,confirmed:true})});
   function field(label, value = '') { const wrapper = make('label', 'email-field', label), input = make('input'); input.value = value; wrapper.append(input); box.append(wrapper); return input; }
   const action = drive.action || plan.drive_action || 'search';
+  if (action === 'search' || action === 'read') {
+    const sources = drive.sources || [];
+    if (sources.length) {
+      box.append(make('p', 'email-hint', 'Archivos consultados'));
+      const list = make('div', 'drive-chat-results');
+      for (const file of sources) {
+        const row = make('div', 'drive-chat-row');
+        if (file.url) {
+          const link = make('a', 'library-action', file.name);
+          link.href = file.url; link.target = '_blank'; link.rel = 'noopener noreferrer'; row.append(link);
+        } else row.append(make('strong', '', file.name));
+        list.append(row);
+      }
+      box.append(list);
+    }
+    return;
+  }
   if (action === 'create_folder') {
     const name = field('Nombre de la carpeta', plan.drive_file || plan.title || '');
     const button = make('button', 'library-action primary-action', 'Crear carpeta');

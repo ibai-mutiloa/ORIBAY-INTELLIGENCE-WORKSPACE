@@ -1,6 +1,7 @@
 """Google Drive operations performed with the signed-in user's OAuth grant."""
 import io
 import re
+import unicodedata
 
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseUpload
@@ -34,6 +35,89 @@ def files(owner, query="", folder="", page_token=""):
     return service(owner).files().list(q=" and ".join(clauses), pageSize=60,
         pageToken=page_token or None, fields=FIELDS, orderBy="folder,name",
         supportsAllDrives=True, includeItemsFromAllDrives=True).execute()
+
+
+def _literal(value):
+    return value.replace("\\", "\\\\").replace("'", "\\'")
+
+
+def _fold(value):
+    return "".join(char for char in unicodedata.normalize("NFKD", value.casefold())
+                   if not unicodedata.combining(char))
+
+
+def _pages(api, expression, limit=200):
+    found, token = [], None
+    while len(found) < limit:
+        page = api.list(q=expression, pageSize=min(100, limit - len(found)),
+                        pageToken=token, fields=FIELDS, supportsAllDrives=True,
+                        includeItemsFromAllDrives=True).execute()
+        found.extend(page.get("files", []))
+        token = page.get("nextPageToken")
+        if not token:
+            break
+    return found
+
+
+def _folder_candidates(api, path):
+    candidates = [""]
+    for segment in [piece for piece in path.strip("/").split("/") if piece][:5]:
+        next_candidates = []
+        for parent in candidates[:8]:
+            clauses = ["trashed = false", f"mimeType = '{FOLDER}'",
+                       f"name contains '{_literal(segment)}'"]
+            if parent:
+                clauses.append(f"'{_literal(parent)}' in parents")
+            for item in _pages(api, " and ".join(clauses), 100):
+                folded_name = _fold(item.get("name", ""))
+                folded_segment = _fold(segment)
+                if (folded_segment in re.findall(r"[a-z0-9]+", folded_name)
+                        if len(folded_segment) <= 3 else folded_segment in folded_name):
+                    next_candidates.append(item["id"])
+        candidates = list(dict.fromkeys(next_candidates))[:8]
+        if not candidates:
+            return []
+    return candidates
+
+
+def search_relevant(owner, phrase, path=""):
+    """Search title and Drive text index by terms, with an optional folder path."""
+    api = service(owner).files()
+    folders = _folder_candidates(api, path) if path else [""]
+    path_found = bool(folders)
+    if not folders:
+        folders = [""]
+    words = [word for word in re.findall(r"[\wáéíóúüñ]+", phrase, re.UNICODE)
+             if len(word) > 2 and _fold(word) not in {"google", "drive", "archivo", "archivos", "documento", "documentos", "busca", "buscar", "sobre", "para", "dentro", "carpeta", "quiero", "que", "hace", "esta", "este", "dime", "encuentra", "explica", "resumen"}]
+    terms = sorted(set(words), key=len, reverse=True)[:4]
+    items, matches = {}, {}
+    for folder in folders:
+        parent = f" and '{_literal(folder)}' in parents" if folder else ""
+        for term in terms or [""]:
+            condition = (f" and (name contains '{_literal(term)}' or fullText contains '{_literal(term)}')"
+                         if term else "")
+            for item in _pages(api, "trashed = false" + parent + condition, 100):
+                items[item["id"]] = item
+                if term:
+                    matches.setdefault(item["id"], set()).add(_fold(term))
+    if not items and path and folders != [""]:
+        for folder in folders:
+            for item in _pages(api, f"trashed = false and '{_literal(folder)}' in parents", 120):
+                items[item["id"]] = item
+    if not items and path and folders != [""]:
+        for term in terms:
+            condition = f"trashed = false and (name contains '{_literal(term)}' or fullText contains '{_literal(term)}')"
+            for item in _pages(api, condition, 100):
+                items[item["id"]] = item
+        path_found = False
+    folded_terms = [_fold(term) for term in terms]
+    def score(item):
+        name = _fold(item.get("name", ""))
+        description = _fold(item.get("description", ""))
+        return sum(5 if term in name else 2 if term in description else 0 for term in folded_terms) + 3 * len(matches.get(item["id"], ()))
+    ranked = sorted(items.values(), key=lambda item: (score(item), item.get("mimeType") != FOLDER,
+                                                      item.get("modifiedTime", "")), reverse=True)
+    return {"files": ranked[:12], "path_found": path_found, "path": path}
 
 
 def metadata(owner, file_id):

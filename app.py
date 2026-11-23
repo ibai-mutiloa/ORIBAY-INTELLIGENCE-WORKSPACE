@@ -29,7 +29,7 @@ from reportlab.lib.enums import TA_CENTER
 from reportlab.lib.units import mm
 from email.message import EmailMessage
 from googleapiclient.discovery import build
-from router import decide, draft_business_email, draft_pdf_analysis
+from router import decide, draft_business_email, draft_pdf_analysis, answer_from_drive
 from user_data_auth import (UserBigQueryAuthError, begin_oauth, disconnect_oauth,
                             finish_oauth, is_connected, query_data_agent_as_user, _redirect_uri)
 from user_data_auth import drive_is_connected
@@ -183,7 +183,7 @@ def save_conversation_result(conversation_ref, question, result):
                              "alert_metric", "alert_operator", "alert_threshold", "alert_period",
                              "alert_frequency", "alert_filters", "needs_clarification", "clarification",
                              "context_used", "context_reference", "drive_action", "drive_query",
-                             "drive_file", "drive_destination") if key in plan})
+                             "drive_file", "drive_destination", "drive_path") if key in plan})
     conversation_ref.update({
         "updated_at": datetime.now(timezone.utc).isoformat(),
         "preview": answer[:180],
@@ -822,15 +822,39 @@ def execute_plan(question: str, plan: dict, conversation_history=None) -> dict:
             steps.append({"name": "Regla", "detail": "Revisando métrica, periodo, umbral y frecuencia", "status": "done"})
             return dict(route=route, plan=plan, steps=steps, answer=plan.get("clarification") if plan.get("needs_clarification") else "Regla preparada. Revísala antes de guardarla.")
         if route == "drive":
-            steps.append({"name": "Drive", "detail": "Preparando la acción con tus archivos", "status": "done"})
+            steps.append({"name": "Drive", "detail": "Consultando tus archivos", "status": "done"})
             if not drive_is_connected(current_owner()):
                 return dict(route=route, plan=plan, steps=steps, drive={"connected": False},
                             answer="Para trabajar con tus archivos, conecta Google Drive con tu cuenta.")
             action = plan.get("drive_action") or "search"
-            query = str(plan.get("drive_query") or plan.get("drive_file") or "")[:120]
+            path_match = re.search(r"\bpath:([^\s,;]+)", question, re.IGNORECASE)
+            path = path_match.group(1).strip("/")[:160] if path_match else str(plan.get("drive_path") or "")[:160]
+            query = re.sub(r"\bpath:[^\s,;]+", " ", str(plan.get("drive_query") or plan.get("drive_file") or ""), flags=re.IGNORECASE).strip()[:120]
+            search_phrase = query or re.sub(r"\bpath:[^\s,;]+", " ", question, flags=re.IGNORECASE)
             result = {"connected": True, "action": action, "files": [], "documents": []}
-            if action in ("search", "read", "rename", "move"):
-                result["files"] = drive_tools.files(current_owner(), query).get("files", [])
+            if action in ("search", "read"):
+                found = drive_tools.search_relevant(current_owner(), search_phrase, path)
+                result["sources"] = [{"id": item["id"], "name": item.get("name", "Archivo"),
+                                      "url": item.get("webViewLink", ""), "mimeType": item.get("mimeType", "")}
+                                     for item in found["files"][:8]]
+                if not found["files"]:
+                    answer = "No he encontrado archivos relacionados con esa consulta en tu Drive. Prueba con otro nombre o carpeta."
+                else:
+                    evidence = []
+                    for item in found["files"][:6]:
+                        try:
+                            content = drive_tools.read_text(current_owner(), item["id"])
+                            evidence.append({"name": item.get("name", ""), "text": content["text"][:7000]})
+                        except Exception as exc:
+                            app.logger.info("No se pudo leer un candidato de Drive: %s", type(exc).__name__)
+                    answer = answer_from_drive(question, evidence) if evidence else (
+                        "He encontrado archivos relacionados, pero su contenido no se puede leer aquí. Puedes abrirlos desde los enlaces de Drive.")
+                    if path and not found["path_found"]:
+                        answer = f"No localicé la ruta exacta «{path}»; amplié la búsqueda a tu Drive.\n\n" + answer
+                steps[-1]["detail"] = f"{len(found['files'])} archivos relacionados; respuesta basada en las fuentes disponibles"
+                return dict(route=route, plan=plan, steps=steps, drive=result, answer=answer)
+            if action in ("rename", "move"):
+                result["files"] = drive_tools.search_relevant(current_owner(), search_phrase, path)["files"]
             if action == "save_pdf":
                 docs = firestore.Client(project=PROJECT).collection("oribay_library").where("owner", "==", current_owner()).stream()
                 result["documents"] = [{"id": d.id, "title": d.to_dict().get("title", "Informe")}
