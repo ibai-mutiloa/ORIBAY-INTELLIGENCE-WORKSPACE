@@ -62,6 +62,8 @@ def _fallback(message: str) -> dict:
                     "read" if re.search(r"\b(?:lee|leer|resume|resumir|abre)\b", lower) else "search")
     drive_query = re.sub(r"\b(?:busca|buscar|lee|leer|resume|resumir|abre|archivo|documento|en|de|mi|google|drive)\b", " ", lower)
     drive_query = re.sub(r"\s+", " ", drive_query).strip()[:120]
+    if drive_query in ("mis informes", "mis archivos", "todos mis archivos", "todos los archivos", "informes", "archivos"):
+        drive_query = ""
     folder_match = re.search(r"\bcarpeta\s+(?:llamada\s+)?(.+?)(?:\s+en\s+(?:mi\s+)?drive|$)", message, re.IGNORECASE)
     drive_file = folder_match.group(1).strip()[:120] if drive_action == "create_folder" and folder_match else ""
     return {"route": route, "data_question": message, "title": "Solicitud Oribay",
