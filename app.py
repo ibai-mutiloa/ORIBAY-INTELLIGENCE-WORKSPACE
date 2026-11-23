@@ -729,7 +729,7 @@ def conversation_summary(conversation_id):
     if not turns:
         return jsonify(summary=conversation.get("summary", ""))
     summary = summarize_conversation(turns)
-    ref.update({"summary": summary})
+    ref.update({"summary": summary, "title": summary})
     return jsonify(summary=summary)
 
 
@@ -766,7 +766,7 @@ def conversation_get(conversation_id):
                          "document_library_id": message.get("document_library_id", ""),
                          "charts": message.get("charts", []), "tables": message.get("tables", []),
                          "plan": message.get("plan", {})})
-    return jsonify(id=conversation_id, title=conversation.get("title", "Chat de ventas"), messages=messages)
+    return jsonify(id=conversation_id, title=conversation.get("summary") or conversation.get("title", "Chat de ventas"), messages=messages)
 
 
 @app.delete("/api/conversations/<conversation_id>")

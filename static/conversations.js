@@ -166,7 +166,7 @@
         const open = make('button', 'conversation-open');
         open.type = 'button';
         open.setAttribute('aria-label', `Abrir conversación: ${item.summary || item.title}`);
-        const label = make('span', 'conversation-title', item.id === activeId ? item.title : item.summary || item.title || 'Nueva conversación');
+        const label = make('span', 'conversation-title', item.summary || item.title || 'Nueva conversación');
         const meta = make('span', 'conversation-meta', dateLabel(item.updated_at));
         open.append(label, meta);
         open.addEventListener('click', () => openConversation(item.id));
