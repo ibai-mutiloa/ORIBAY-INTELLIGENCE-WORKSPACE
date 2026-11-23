@@ -193,14 +193,14 @@ def save_conversation_result(conversation_ref, question, result):
     })
 
 
-def conversation_sales_context(conversation_ref, agent="ventas", max_turns=5):
-    """Build a small, server-owned transcript for follow-up sales questions."""
+def conversation_recent_agent_turns(conversation_ref, max_turns=5):
+    """Only the latest uninterrupted stretch of one data agent is remembered."""
     if conversation_ref is None:
         return []
     messages = list(conversation_ref.collection("messages")
                     .order_by("created_at", direction=firestore.Query.DESCENDING)
                     .limit(40).stream())
-    transcript = []
+    turns = []
     pending_question = ""
     for snapshot in reversed(messages):
         item = snapshot.to_dict() or {}
@@ -210,13 +210,36 @@ def conversation_sales_context(conversation_ref, agent="ventas", max_turns=5):
             route = item.get("route")
             answer = str(item.get("answer", "")).strip()[:2400]
             message_agent = item.get("data_agent") or ("adhesiva" if route == "adhesiva" else "ventas")
-            if pending_question and route in ("ventas", "adhesiva", "pdf", "correo") and message_agent == agent and answer:
-                transcript.extend([
-                    {"userMessage": {"text": pending_question}},
-                    {"systemMessage": {"text": {"parts": [answer]}}},
-                ])
+            if pending_question and route in ("ventas", "adhesiva", "pdf", "correo") and answer:
+                turns.append({"route": message_agent, "question": pending_question, "answer": answer})
+            elif pending_question:
+                turns.append({"route": None})
             pending_question = ""
-    return transcript[-(max_turns * 2):]
+    if not turns or turns[-1].get("route") not in ("ventas", "adhesiva"):
+        return []
+    recent_agent = turns[-1]["route"]
+    segment = []
+    for turn in reversed(turns):
+        if turn.get("route") != recent_agent:
+            break
+        segment.append(turn)
+        if len(segment) >= max_turns:
+            break
+    return list(reversed(segment))
+
+
+def conversation_sales_context(conversation_ref, agent="ventas", max_turns=5):
+    """Pass only current-agent turns to the Conversational Analytics agent."""
+    turns = conversation_recent_agent_turns(conversation_ref, max_turns=max_turns)
+    if not turns or turns[-1]["route"] != agent:
+        return []
+    transcript = []
+    for turn in turns:
+        transcript.extend([
+            {"userMessage": {"text": turn["question"]}},
+            {"systemMessage": {"text": {"parts": [turn["answer"]]}}},
+        ])
+    return transcript
 
 
 @app.before_request
@@ -759,7 +782,8 @@ def conversation_get(conversation_id):
             email_snapshot, email_library_id = {}, ""
         messages.append({"kind": message.get("kind"), "created_at": message.get("created_at"),
                          "question": message.get("question", ""), "answer": message.get("answer", ""),
-                         "route": message.get("route", ""), "title": message.get("title", ""),
+                         "route": message.get("route", ""), "data_agent": message.get("data_agent", ""),
+                         "title": message.get("title", ""),
                          "library_id": message.get("library_id", ""),
                          "email_library_id": email_library_id,
                          "email_snapshot": email_snapshot, "email_invalid": email_invalid,
@@ -806,7 +830,7 @@ def ask():
         if conversation.get("title") == "Nueva conversación":
             conversation_ref.update({"title": question[:72], "updated_at": datetime.now(timezone.utc).isoformat()})
     try:
-        history = payload.get("history") if isinstance(payload.get("history"), list) else None
+        history = conversation_recent_agent_turns(conversation_ref) if conversation_ref else []
         plan = decide(question, history)
         if conversation_ref:
             conversation_history = conversation_sales_context(conversation_ref, agent=plan.get("data_agent", "ventas"))
@@ -917,6 +941,10 @@ def execute_plan(question: str, plan: dict, conversation_history=None) -> dict:
                 "no demostradas; señala límites de interpretación. Incluye las tablas de datos y un gráfico "
                 "adecuado con títulos, unidades y etiquetas legibles. No inventes cifras ni definiciones."
             )
+            if re.search(r"\bsolo\b", question, re.IGNORECASE):
+                data_question += (" La palabra «solo» restringe el alcance: usa el historial únicamente "
+                                  "para identificar referencias o filtros mencionados; excluye del informe "
+                                  "cualquier cliente, planta o análisis anterior ajeno al alcance pedido.")
         data = query_agent(data_question, display_question=question, conversation_history=conversation_history, agent=data_agent)
         steps.append({"name": "Aplicación Adhesiva" if data_agent == "adhesiva" else "Ventas Oribay", "detail": "Consulté el agente de datos y recibí sus resultados", "status": "done"})
         if route == "pdf":

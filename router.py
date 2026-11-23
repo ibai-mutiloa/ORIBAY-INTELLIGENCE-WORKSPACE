@@ -16,7 +16,7 @@ drive_file, drive_destination, drive_path,
 alert_metric, alert_operator (>|>=|<|<=), alert_threshold (número o null),
 alert_period, alert_frequency, alert_filters, needs_clarification, clarification,
 context_used (boolean), context_reference (texto breve).
-Elige adhesiva para aplicación adhesiva, OEE, robots, producción, calidad o balanceo de carga; ventas para facturación, clientes, importes y ventas. En preguntas de seguimiento breves hereda data_agent del análisis pertinente más reciente. No mezcles datos de agentes distintos. Para PDF y correo, data_question pide al agente elegido
+Elige adhesiva para aplicación adhesiva, OEE, robots, producción, calidad o balanceo de carga; ventas para facturación, clientes, importes y ventas. En preguntas de seguimiento breves hereda data_agent del análisis pertinente más reciente. Si cambia el agente, empieza un contexto nuevo; no reutilices preguntas, filtros ni resultados del otro agente. No mezcles datos de agentes distintos. Para PDF y correo, data_question pide al agente elegido
 los datos estrictamente necesarios. Un mensaje o correo puntual que acompaña un análisis
 (por ejemplo, «resume los últimos 3 meses para AC032 y envíame un mensaje») va por correo,
 nunca por alerta. «Envíame/mándame un mensaje» sin otro destinatario significa preparar
@@ -46,6 +46,7 @@ Si falta métrica, umbral, periodo o frecuencia, needs_clarification=true.
 Si el usuario cambia de tema, no heredes filtros antiguos. Marca context_used
 solo si realmente has reutilizado una definición del historial y explica cuál
 en context_reference. No elijas enviar correo; solo redactar.
+Si pide «solo» un tema para un PDF o correo, excluye explícitamente los otros temas del historial.
 No afirmes que hayas consultado datos ni ejecutado herramientas."""
 
 
