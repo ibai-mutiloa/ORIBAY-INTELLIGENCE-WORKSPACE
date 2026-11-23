@@ -6,7 +6,7 @@ La ruta Drive del chat permite buscar archivos con la cuenta del usuario, leer G
 
 Las consultas de búsqueda y lectura de Drive separan `path:` de la pregunta, buscan por términos de nombre y contenido, leen los candidatos accesibles y redactan una respuesta basada en ellos con enlaces a los archivos. Si la ruta no se resuelve literalmente, amplían la búsqueda y lo indican. Crear, renombrar, mover y guardar un PDF siguen requiriendo revisión y confirmación.
 
-El flujo conversacional de Drive se desplegó en Cloud Run en la revisión `oribay-intelligence-pilot-00073-kdl`. Drive API está habilitada en `aad-analitica-oee`. El OAuth personal solicita además el ámbito `https://www.googleapis.com/auth/drive`; los usuarios deberán conectar Google desde el enlace que aparece en el chat cuando lo necesiten. Queda por comprobar el consentimiento con una cuenta real y las operaciones con archivos reales.
+El flujo conversacional de Drive se desplegó en Cloud Run en la revisión `oribay-intelligence-pilot-00074-9fr`. Drive API está habilitada en `aad-analitica-oee`. El OAuth personal solicita además el ámbito `https://www.googleapis.com/auth/drive`; el usuario ya observó la conexión y lectura en producción. Queda por comprobar la respuesta directa de búsqueda y lectura de esta revisión con sus consultas reales.
 
 Desplegado en Cloud Run. El servicio `oribay-intelligence-pilot` ejecuta la app con IAP y almacén privado; `oribay-alerts-worker` procesa alertas programadas.
 
