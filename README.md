@@ -1,5 +1,11 @@
 # Oribay Intelligence
 
+## Integración de Google Drive en desarrollo
+
+El panel «Tu espacio» permite buscar archivos de Drive con la cuenta del usuario, leer Google Docs, PDF, CSV y texto, crear carpetas, renombrar y mover archivos, y guardar los PDF de la biblioteca. Los cambios requieren confirmación. Los demás formatos se abren en Drive. La acción «Usar en el chat» inserta un extracto visible y editable en la caja de conversación.
+
+Esta integración está en el repositorio, **pendiente de despliegue y de autorización real**. El OAuth personal solicita además el ámbito `https://www.googleapis.com/auth/drive`; los usuarios deberán volver a conectar Google desde el enlace del sitio. Hay que comprobar que Drive API esté habilitada en `aad-analitica-oee` y que la pantalla de consentimiento interna permita el nuevo ámbito. La sesión de `gcloud` usada durante el desarrollo caducó antes de desplegar esta versión. No se ha probado con archivos reales.
+
 Desplegado en Cloud Run. El servicio `oribay-intelligence-pilot` ejecuta la app con IAP y almacén privado; `oribay-alerts-worker` procesa alertas programadas.
 
 Chat paralelo con cuatro rutas visibles. El router Gemini decide entre consulta comercial, borrador de alerta, PDF y borrador de correo. La consulta comercial usa la API A2A del agente Ventas Oribay y renderiza los artefactos Vega-Lite; el SQL queda en un panel secundario.

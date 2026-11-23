@@ -14,7 +14,8 @@ from google.auth.transport import requests as google_requests
 PROJECT = "aad-analitica-oee"
 AGENT = "projects/aad-analitica-oee/locations/eu/dataAgents/agent_33fe6cdf-ec2d-4cd8-93c7-a5c87fc4c345"
 MCP_URL = "https://geminidataanalytics.googleapis.com/mcp"
-SCOPES = "https://www.googleapis.com/auth/geminidataanalytics https://www.googleapis.com/auth/bigquery.readonly openid email"
+DRIVE_SCOPE = "https://www.googleapis.com/auth/drive"
+SCOPES = "https://www.googleapis.com/auth/geminidataanalytics https://www.googleapis.com/auth/bigquery.readonly " + DRIVE_SCOPE + " openid email"
 AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
 TOKEN_URL = "https://oauth2.googleapis.com/token"
 
@@ -104,7 +105,7 @@ def finish_oauth(owner, state, code, redirect_uri):
     encrypted = _fernet().encrypt(refresh_token.encode()).decode()
     _db().collection("oribay_bq_oauth").document(owner.lower()).set({
         "owner": owner.lower(), "refresh_token_enc": encrypted,
-        "scopes": SCOPES, "connected_at": datetime.now(timezone.utc).isoformat(),
+        "scopes": tokens.get("scope", ""), "connected_at": datetime.now(timezone.utc).isoformat(),
         "google_subject": claims.get("sub", ""),
     })
 
@@ -115,6 +116,11 @@ def disconnect_oauth(owner):
 
 def is_connected(owner):
     return _db().collection("oribay_bq_oauth").document(owner.lower()).get().exists
+
+
+def drive_is_connected(owner):
+    snapshot = _db().collection("oribay_bq_oauth").document(owner.lower()).get()
+    return snapshot.exists and DRIVE_SCOPE in snapshot.to_dict().get("scopes", "").split()
 
 
 def user_access_token(owner):

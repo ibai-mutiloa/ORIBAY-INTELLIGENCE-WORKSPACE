@@ -32,6 +32,8 @@ from googleapiclient.discovery import build
 from router import decide, draft_business_email, draft_pdf_analysis
 from user_data_auth import (UserBigQueryAuthError, begin_oauth, disconnect_oauth,
                             finish_oauth, is_connected, query_data_agent_as_user, _redirect_uri)
+from user_data_auth import drive_is_connected
+import drive_tools
 
 app = Flask(__name__)
 PROJECT = "aad-analitica-oee"
@@ -563,6 +565,7 @@ def session_info():
     email = getattr(g, "user_email", None) or os.environ.get("ORIBAY_USER_EMAIL", "")
     connected = is_connected(email) if email and IAP_AUDIENCE else False
     return jsonify(email=email, authenticated=bool(email), bigquery_connected=connected,
+                   drive_connected=drive_is_connected(email) if email and IAP_AUDIENCE else False,
                    bigquery_oauth_configured=bool(os.environ.get("ORIBAY_GOOGLE_OAUTH_CLIENT_ID")
                                                   and os.environ.get("ORIBAY_GOOGLE_OAUTH_CLIENT_SECRET")
                                                   and os.environ.get("ORIBAY_OAUTH_TOKEN_ENCRYPTION_KEY")))
@@ -602,6 +605,82 @@ def google_bigquery_auth_disconnect():
         return jsonify(error="Inicia sesión antes de cambiar esta conexión."), 401
     disconnect_oauth(owner)
     return jsonify(disconnected=True)
+
+
+@app.get("/api/drive/files")
+def drive_files():
+    try:
+        return jsonify(drive_tools.files(current_owner(), request.args.get("q", ""),
+                      request.args.get("folder", ""), request.args.get("page_token", "")))
+    except UserBigQueryAuthError as exc:
+        return jsonify(error=str(exc)), 401
+    except Exception:
+        app.logger.exception("No se pudo consultar Drive")
+        return jsonify(error="No se pudieron consultar los archivos de Drive."), 502
+
+
+@app.get("/api/drive/files/<file_id>/content")
+def drive_file_content(file_id):
+    try:
+        return jsonify(drive_tools.read_text(current_owner(), file_id))
+    except (UserBigQueryAuthError, ValueError) as exc:
+        return jsonify(error=str(exc)), 400
+    except Exception:
+        app.logger.exception("No se pudo leer el archivo de Drive")
+        return jsonify(error="No se pudo leer este archivo con tu autorización de Drive."), 502
+
+
+@app.post("/api/drive/folders")
+def drive_folder_create():
+    data = request.get_json(silent=True) or {}
+    name = str(data.get("name", "")).strip()
+    if not data.get("confirmed") or not 1 <= len(name) <= 200:
+        return jsonify(error="Confirma el nombre de la carpeta."), 400
+    try:
+        return jsonify(drive_tools.create_folder(current_owner(), name, data.get("parent", "")))
+    except Exception:
+        app.logger.exception("No se pudo crear la carpeta")
+        return jsonify(error="No se pudo crear la carpeta en Drive."), 502
+
+
+@app.patch("/api/drive/files/<file_id>")
+def drive_file_update(file_id):
+    data = request.get_json(silent=True) or {}
+    if not data.get("confirmed"):
+        return jsonify(error="Confirma el cambio antes de aplicarlo."), 400
+    try:
+        if data.get("name") and 1 <= len(str(data["name"]).strip()) <= 200:
+            return jsonify(drive_tools.rename(current_owner(), file_id, str(data["name"]).strip()))
+        if data.get("destination"):
+            return jsonify(drive_tools.move(current_owner(), file_id, str(data["destination"])))
+        return jsonify(error="Indica un nombre o carpeta de destino."), 400
+    except ValueError as exc:
+        return jsonify(error=str(exc)), 400
+    except Exception:
+        app.logger.exception("No se pudo organizar el archivo")
+        return jsonify(error="No se pudo actualizar el archivo en Drive."), 502
+
+
+@app.post("/api/library/<item_id>/drive")
+def library_save_to_drive(item_id):
+    data = request.get_json(silent=True) or {}
+    if not data.get("confirmed"):
+        return jsonify(error="Confirma dónde quieres guardar el informe."), 400
+    doc = firestore.Client(project=PROJECT).collection("oribay_library").document(item_id).get()
+    if not doc.exists or doc.to_dict().get("owner") != current_owner() or doc.to_dict().get("deleted") or doc.to_dict().get("type") != "document":
+        return jsonify(error="Informe no encontrado en tu espacio."), 404
+    item = doc.to_dict()
+    try:
+        pdf_bytes = storage.Client(project=PROJECT).bucket(LIBRARY_BUCKET).blob(item["object_path"]).download_as_bytes()
+        name = str(data.get("name") or (item.get("payload") or {}).get("filename") or "informe-oribay.pdf").strip()
+        if not name.lower().endswith(".pdf"):
+            name += ".pdf"
+        if len(name) > 200:
+            return jsonify(error="El nombre del PDF es demasiado largo."), 400
+        return jsonify(drive_tools.upload_pdf(current_owner(), name, pdf_bytes, str(data.get("folder", ""))))
+    except Exception:
+        app.logger.exception("No se pudo guardar el informe en Drive")
+        return jsonify(error="No se pudo guardar el PDF en tu Drive."), 502
 
 
 @app.get("/api/conversations")
