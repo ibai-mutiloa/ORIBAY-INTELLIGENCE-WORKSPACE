@@ -180,9 +180,11 @@
   function makeAssistantCard(message) {
     const card = make('article', 'msg bot');
     card.append(make('div', 'eyebrow', 'ORIBAY · ASISTENTE'));
-    const routeNames = { ventas: 'Consulta de ventas', pdf: 'Informe', correo: 'Gmail · mensaje', alerta: 'Alerta', error: 'Solicitud' };
+    const routeNames = { ventas: 'Consulta de ventas', pdf: 'Informe', correo: 'Gmail · mensaje', drive: 'Google Drive', alerta: 'Alerta', error: 'Solicitud' };
     const trace = make('div', 'tool-run');
     stage(trace, '✦', 'Conversación', routeNames[message.route] || 'Respuesta guardada', 'done');
+    if (message.route === 'drive') stage(trace, serviceIcon('drive'), 'Google Drive', message.answer || 'Acción preparada', 'done');
+    if (message.route === 'correo') stage(trace, serviceIcon('gmail'), 'Gmail', 'Borrador de correo', 'done');
     card.append(trace);
     if (message.answer) card.append(formattedAnswer(message.answer));
     if (message.email_invalid) card.append(make('p', 'notice', 'El borrador anterior se ha ocultado porque la consulta de ventas no obtuvo datos verificables. Vuelve a pedir el correo para generar uno nuevo.'));
@@ -309,7 +311,7 @@
       await refreshHistory();
       const data = await sendJson('/api/ask', { question, conversation_id: activeId, history: salesHistory.slice(-5) });
       run.replaceChildren();
-      const stepIcons = { Router: '✦', Regla: '◷', 'Ventas Oribay': '▥', PDF: '▤', Correo: '✉' };
+      const stepIcons = { Router: '✦', Regla: '◷', 'Ventas Oribay': '▥', PDF: '▤', Gmail: serviceIcon('gmail'), Drive: serviceIcon('drive') };
       const completedSteps = data.steps?.length ? data.steps : [{ name: 'Router', detail: `Ruta elegida: ${data.route}`, status: 'done' }];
       completedSteps.forEach((item, index) => {
         const row = stage(run, stepIcons[item.name] || '✦', item.name, item.detail || 'Paso completado', item.status === 'error' ? 'error' : 'done');
@@ -327,6 +329,7 @@
       for (const table of data.tables || []) appendTable(card, table);
       if (data.route === 'pdf') showPdf(card, data);
       if (data.route === 'correo' && data.email) await showEmail(card, data.email);
+      if (data.route === 'drive') await showDriveAction(card, data);
       if (data.sql?.length) {
         const details = make('details');
         details.append(make('summary', '', 'Ver consultas SQL'), make('pre', '', data.sql.join('\n\n')));

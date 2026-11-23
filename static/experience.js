@@ -6,8 +6,8 @@ const workspaceSend=document.querySelector('#send');
 let sessionEmail='';
 fetch('/api/session').then(r=>r.json()).then(x=>{sessionEmail=x.email||''}).catch(()=>{});
 function make(tag,cls,value){const e=document.createElement(tag);if(cls)e.className=cls;if(value!==undefined)e.textContent=value;return e}
-function stage(host,icon,name,detail,state){const row=make('div','tool-stage '+state);row.append(make('div','orb',icon));const words=make('div');words.append(make('strong','',name),make('small','',detail));row.append(words);host.append(row);return row}
-function setStage(row,state,detail){row.className='tool-stage '+state;if(detail)row.querySelector('small').textContent=detail;row.querySelector('.orb').textContent=state==='done'?'✓':state==='error'?'!':row.querySelector('.orb').textContent}
+function stage(host,icon,name,detail,state){const row=make('div','tool-stage '+state),orb=make('div','orb');if(icon instanceof Node)orb.append(icon);else orb.textContent=icon;row.append(orb);const words=make('div');words.append(make('strong','',name),make('small','',detail));row.append(words);host.append(row);return row}
+function setStage(row,state,detail){row.className='tool-stage '+state;if(detail)row.querySelector('small').textContent=detail;const orb=row.querySelector('.orb');if(!orb.querySelector('svg'))orb.textContent=state==='done'?'✓':state==='error'?'!':orb.textContent}
 function down(){const panel=document.querySelector('#chat');if(panel)panel.scrollTo({top:panel.scrollHeight,behavior:'smooth'})}
 async function sendJson(url,value){const r=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(value)}),d=await r.json();if(!r.ok)throw Error(d.error||'Error de servicio');return d}
 function showAlert(card,plan){
@@ -97,7 +97,7 @@ function renderLibrary(){
    if(item.status==='active'){const pause=make('button','library-action','Pausar');pause.onclick=async()=>{try{await sendJson('/api/alerts/'+encodeURIComponent(item.alert_id)+'/pause',{});await loadLibrary()}catch(error){card.append(make('p','notice',error.message))}};actions.append(pause)}
    actions.append(check);
   }
-  if(item.downloadable){const link=make('a','library-action primary-action','Descargar informe');link.href='/api/library/'+encodeURIComponent(item.id)+'/download';link.setAttribute('download','');actions.append(link);const drive=make('button','library-action','Guardar en Drive');drive.onclick=()=>window.saveOribayPdfToDrive(item.id,card);actions.append(drive)}
+  if(item.downloadable){const link=make('a','library-action primary-action','Descargar informe');link.href='/api/library/'+encodeURIComponent(item.id)+'/download';link.setAttribute('download','');actions.append(link)}
   if(item.type==='email'){const open=make('button','library-action','Editar borrador');open.onclick=async()=>{try{const detail=await getLibrary('/api/library/'+encodeURIComponent(item.id));await showEmail(card,{...detail.payload,library_id:item.id})}catch(error){card.append(make('p','notice',error.message))}};actions.append(open)}
   const remove=make('button','library-remove','Retirar');remove.title='Retirar de tu espacio';remove.setAttribute('aria-label','Retirar '+(item.title||typeNames[item.type]));remove.textContent='×';remove.onclick=async()=>{if(!confirm('¿Retirar este elemento de tu espacio?'))return;const response=await fetch(item.type==='alert'?'/api/alerts/'+encodeURIComponent(item.alert_id):'/api/library/'+encodeURIComponent(item.id),{method:'DELETE'});if(response.ok)await loadLibrary()};actions.append(remove);
   card.append(actions);libraryList.append(card);

@@ -22,7 +22,9 @@ workspaceForm.onsubmit = async event => {
     if (plan.context_used && plan.context_reference) {
       card.append(make('div', 'route-pill', '↳ Contexto: ' + plan.context_reference));
     }
-    active = plan.route === 'alerta'
+    active = plan.route === 'drive'
+      ? stage(run, serviceIcon('drive'), 'Google Drive', 'Comprobando conexión y archivos', 'running')
+      : plan.route === 'alerta'
       ? stage(run, '◷', 'Preparando la regla', 'Extrayendo métrica, umbral y frecuencia', 'running')
       : stage(run, '▥', 'Consultando Ventas Oribay', 'Esperando datos y gráficos del agente', 'running');
     down();
@@ -31,9 +33,9 @@ workspaceForm.onsubmit = async event => {
       salesHistory.push({route:'ventas', question, answer:data.answer});
       if (salesHistory.length > 5) salesHistory.shift();
     }
-    setStage(active, 'done', plan.route === 'alerta' ? 'Regla lista para revisión' : 'Respuesta analítica recibida');
+    setStage(active, 'done', plan.route === 'alerta' ? 'Regla lista para revisión' : plan.route === 'drive' ? 'Acción lista para revisar' : 'Respuesta analítica recibida');
     if (data.route === 'pdf') stage(run, '▤', 'Preparando documento', 'Descarga disponible', 'done');
-    if (data.route === 'correo') stage(run, '✉', 'Redactando correo', 'Borrador listo para revisión', 'done');
+    if (data.route === 'correo') stage(run, serviceIcon('gmail'), 'Gmail', 'Borrador listo para revisión', 'done');
     if (data.answer) card.append(make('div', 'answer', data.answer));
     if (data.route === 'alerta') showAlert(card, data.plan);
     for (const spec of data.charts || []) {
@@ -44,6 +46,7 @@ workspaceForm.onsubmit = async event => {
     for (const table of data.tables || []) card.append(make('pre', 'table', table));
     if (data.route === 'pdf') showPdf(card, data);
     if (data.route === 'correo') showEmail(card, data.email || {});
+    if (data.route === 'drive') await showDriveAction(card, data);
     if (data.sql?.length) {
       const details = make('details');
       details.append(make('summary', '', 'Ver consultas SQL'), make('pre', '', data.sql.join('\n\n')));

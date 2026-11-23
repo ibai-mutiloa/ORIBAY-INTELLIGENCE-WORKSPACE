@@ -7,9 +7,11 @@ import re
 from google.genai import Client, types
 from google.oauth2.credentials import Credentials
 
-ROUTES = {"ventas", "alerta", "pdf", "correo"}
+ROUTES = {"ventas", "alerta", "pdf", "correo", "drive"}
 SYSTEM = """Eres el router de Oribay. Devuelve SOLO JSON con:
-route (ventas|alerta|pdf|correo), data_question, title, recipient, subject,
+route (ventas|alerta|pdf|correo|drive), data_question, title, recipient, subject,
+drive_action (search|read|save_pdf|create_folder|rename|move), drive_query,
+drive_file, drive_destination,
 alert_metric, alert_operator (>|>=|<|<=), alert_threshold (número o null),
 alert_period, alert_frequency, alert_filters, needs_clarification, clarification,
 context_used (boolean), context_reference (texto breve).
@@ -21,6 +23,10 @@ un correo dirigido a la persona conectada; no se envía automáticamente. Reserv
 para vigilar una condición futura o recurrente, especialmente «avísame cuando» o «cada día».
 Si la petición mezcla una consulta y el envío puntual de sus resultados, usa correo y
 conserva íntegros periodo, métrica e identificadores de filtros como AC032 en data_question.
+Elige drive cuando el usuario quiera buscar, leer u organizar archivos de Google Drive,
+o guardar allí un PDF existente. No ejecutes cambios en Drive: prepara la acción para
+que el usuario elija el archivo y confirme. Si pide crear un nuevo informe y guardarlo
+en Drive, elige pdf y conserva en el título la intención de guardarlo allí.
 Para una alerta, alert_metric puede ser un campo
 del glosario o una fórmula/combinación de campos; conserva sus componentes, operadores
 y agregaciones tal como los expresa el usuario. No conviertas la fórmula en un campo
@@ -42,17 +48,29 @@ def _fallback(message: str) -> dict:
     lower = message.lower()
     one_time_message = bool(re.search(r"\b(?:env[ií]ame|m[aá]ndame|env[ií]a|manda)\b.{0,35}\b(?:mensaje|correo|email|gmail)\b|\b(?:mensaje|correo|email|gmail)\b.{0,35}\b(?:env[ií]ame|m[aá]ndame)\b", lower))
     recurring_alert = bool(re.search(r"\b(?:cada\s+(?:d[ií]a|semana|mes)|cuando\s+(?:supere|baje|sea|llegue)|av[ií]same\s+(?:cuando|si)|notif[ií]came\s+cuando|vigila|monitoriza)\b", lower))
-    route = ("alerta" if recurring_alert else
+    drive_request = bool(re.search(r"\b(?:drive|mi unidad|mis archivos|carpeta de google)\b", lower))
+    route = ("drive" if drive_request else
+             "alerta" if recurring_alert else
              "correo" if one_time_message else
              "alerta" if re.search(r"\b(?:alerta|aviso)\b", lower) else
              "pdf" if re.search(r"pdf|informe|documento", lower) else
              "correo" if re.search(r"correo|email|gmail|redacta", lower) else "ventas")
+    drive_action = ("save_pdf" if re.search(r"\b(?:guarda|guardar|sube|subir)\b.*\b(?:pdf|informe)\b", lower) else
+                    "create_folder" if re.search(r"\b(?:crea|crear|nueva)\b.*\bcarpeta\b", lower) else
+                    "rename" if re.search(r"\b(?:renombra|renombrar|cambia el nombre)\b", lower) else
+                    "move" if re.search(r"\b(?:mueve|mover|traslada)\b", lower) else
+                    "read" if re.search(r"\b(?:lee|leer|resume|resumir|abre)\b", lower) else "search")
+    drive_query = re.sub(r"\b(?:busca|buscar|lee|leer|resume|resumir|abre|archivo|documento|en|de|mi|google|drive)\b", " ", lower)
+    drive_query = re.sub(r"\s+", " ", drive_query).strip()[:120]
+    folder_match = re.search(r"\bcarpeta\s+(?:llamada\s+)?(.+?)(?:\s+en\s+(?:mi\s+)?drive|$)", message, re.IGNORECASE)
+    drive_file = folder_match.group(1).strip()[:120] if drive_action == "create_folder" and folder_match else ""
     return {"route": route, "data_question": message, "title": "Solicitud Oribay",
             "recipient": "", "subject": "", "alert_metric": "", "alert_operator": "",
             "alert_threshold": None, "alert_period": "", "alert_frequency": "",
             "alert_filters": "", "needs_clarification": route == "alerta",
             "context_used": False, "context_reference": "",
             "clarification": "Indica métrica, umbral, periodo y frecuencia de comprobación." if route == "alerta" else "",
+            "drive_action": drive_action, "drive_query": drive_query, "drive_file": drive_file, "drive_destination": "",
             "recipient": "", "router_mode": "reglas"}
 
 
@@ -75,6 +93,8 @@ def decide(message: str, history: list | None = None) -> dict:
         result = json.loads(response.text)
         if result.get("route") not in ROUTES:
             raise ValueError("Ruta desconocida")
+        if result.get("route") == "drive" and result.get("drive_action") not in {"search", "read", "save_pdf", "create_folder", "rename", "move"}:
+            result["drive_action"] = "search"
         if result.get("route") == "alerta" and result.get("context_used") and safe_history:
             previous = safe_history[-1]["question"] + " " + safe_history[-1]["answer"]
             current_filters = result.get("alert_filters")

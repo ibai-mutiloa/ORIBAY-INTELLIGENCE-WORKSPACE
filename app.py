@@ -182,7 +182,8 @@ def save_conversation_result(conversation_ref, question, result):
                          plan={key: plan.get(key) for key in (
                              "alert_metric", "alert_operator", "alert_threshold", "alert_period",
                              "alert_frequency", "alert_filters", "needs_clarification", "clarification",
-                             "context_used", "context_reference") if key in plan})
+                             "context_used", "context_reference", "drive_action", "drive_query",
+                             "drive_file", "drive_destination") if key in plan})
     conversation_ref.update({
         "updated_at": datetime.now(timezone.utc).isoformat(),
         "preview": answer[:180],
@@ -803,7 +804,7 @@ def execute_request():
     payload = request.get_json(silent=True) or {}
     question = str(payload.get("question", "")).strip()
     plan = payload.get("plan") or {}
-    if not 1 <= len(question) <= 2000 or plan.get("route") not in ("ventas", "alerta", "pdf", "correo"):
+    if not 1 <= len(question) <= 2000 or plan.get("route") not in ("ventas", "alerta", "pdf", "correo", "drive"):
         return jsonify(error="Solicitud no válida."), 400
     try:
         return jsonify(**execute_and_store(question, plan))
@@ -820,6 +821,22 @@ def execute_plan(question: str, plan: dict, conversation_history=None) -> dict:
         if route == "alerta":
             steps.append({"name": "Regla", "detail": "Revisando métrica, periodo, umbral y frecuencia", "status": "done"})
             return dict(route=route, plan=plan, steps=steps, answer=plan.get("clarification") if plan.get("needs_clarification") else "Regla preparada. Revísala antes de guardarla.")
+        if route == "drive":
+            steps.append({"name": "Drive", "detail": "Preparando la acción con tus archivos", "status": "done"})
+            if not drive_is_connected(current_owner()):
+                return dict(route=route, plan=plan, steps=steps, drive={"connected": False},
+                            answer="Para trabajar con tus archivos, conecta Google Drive con tu cuenta.")
+            action = plan.get("drive_action") or "search"
+            query = str(plan.get("drive_query") or plan.get("drive_file") or "")[:120]
+            result = {"connected": True, "action": action, "files": [], "documents": []}
+            if action in ("search", "read", "rename", "move"):
+                result["files"] = drive_tools.files(current_owner(), query).get("files", [])
+            if action == "save_pdf":
+                docs = firestore.Client(project=PROJECT).collection("oribay_library").where("owner", "==", current_owner()).stream()
+                result["documents"] = [{"id": d.id, "title": d.to_dict().get("title", "Informe")}
+                                       for d in docs if d.to_dict().get("type") == "document" and not d.to_dict().get("deleted")][:30]
+            return dict(route=route, plan=plan, steps=steps, drive=result,
+                        answer="He preparado la acción en Drive. Elige el archivo y confirma cualquier cambio.")
         data_question = plan.get("data_question") or question
         data_question += (" Presenta las cifras con formato de España: punto para separar millares y coma para decimales "
                           "(por ejemplo, 2.083.849,69 €); conserva exactamente identificadores como AC032 y no cambies ni recalcules valores.")

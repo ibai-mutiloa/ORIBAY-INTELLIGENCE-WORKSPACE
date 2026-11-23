@@ -2,7 +2,7 @@
 
 ## Integración de Google Drive en desarrollo
 
-El panel «Tu espacio» permite buscar archivos de Drive con la cuenta del usuario, leer Google Docs, PDF, CSV y texto, crear carpetas, renombrar y mover archivos, y guardar los PDF de la biblioteca. Los cambios requieren confirmación. Los demás formatos se abren en Drive. La acción «Usar en el chat» inserta un extracto visible y editable en la caja de conversación.
+La ruta Drive del chat permite buscar archivos con la cuenta del usuario, leer Google Docs, PDF, CSV y texto, crear carpetas, renombrar y mover archivos, y guardar los PDF de la biblioteca. El router prepara la acción y la conversación muestra la conexión necesaria. Los cambios requieren confirmación. Los demás formatos se abren en Drive. La acción «Usar en el chat» inserta un extracto visible y editable en la caja de conversación.
 
 Esta integración se desplegó en Cloud Run en la revisión `oribay-intelligence-pilot-00071-sbt`. Drive API está habilitada en `aad-analitica-oee`. El OAuth personal solicita además el ámbito `https://www.googleapis.com/auth/drive`; los usuarios deberán volver a conectar Google desde el enlace del sitio. Queda por comprobar el consentimiento con una cuenta real y las operaciones con archivos reales.
 
