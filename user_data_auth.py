@@ -13,6 +13,8 @@ from google.auth.transport import requests as google_requests
 
 PROJECT = "aad-analitica-oee"
 AGENT = "projects/aad-analitica-oee/locations/eu/dataAgents/agent_33fe6cdf-ec2d-4cd8-93c7-a5c87fc4c345"
+ADHESIVE_AGENT = "projects/aad-analitica-oee/locations/eu/dataAgents/oee-oribay"
+DATA_AGENTS = {"ventas": AGENT, "adhesiva": ADHESIVE_AGENT}
 MCP_URL = "https://geminidataanalytics.googleapis.com/mcp"
 DRIVE_SCOPE = "https://www.googleapis.com/auth/drive"
 SCOPES = "https://www.googleapis.com/auth/geminidataanalytics https://www.googleapis.com/auth/bigquery.readonly " + DRIVE_SCOPE + " openid email"
@@ -302,7 +304,9 @@ def _extract_result(value, question=""):
     return {"answer": "\n\n".join(final_answers or answer), "tables": tables[:8], "sql": sql[:8], "charts": charts[:8]}
 
 
-def query_data_agent_as_user(owner, question, chart_request="", history=None):
+def query_data_agent_as_user(owner, question, chart_request="", history=None, agent="ventas"):
+    if agent not in DATA_AGENTS:
+        raise ValueError("Agente de datos no permitido")
     token = user_access_token(owner)
     session = requests.Session()
     headers = {
@@ -333,7 +337,7 @@ def query_data_agent_as_user(owner, question, chart_request="", history=None):
             messages.append(item)
     messages.append({"userMessage": {"text": question}})
     args = {"parent": "projects/aad-analitica-oee/locations/eu",
-            "dataAgentContext": {"dataAgent": AGENT},
+            "dataAgentContext": {"dataAgent": DATA_AGENTS[agent]},
             "messages": messages}
     schema = (chat_tool.get("inputSchema") or {}).get("properties", {})
     args = {key: val for key, val in args.items() if key in schema}

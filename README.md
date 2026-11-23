@@ -1,5 +1,11 @@
 # Oribay Intelligence
 
+## Estado actual: dos agentes de datos
+
+El chat consulta Ventas Oribay (`agent_33fe6cdf-ec2d-4cd8-93c7-a5c87fc4c345`) y Aplicación Adhesiva (`oee-oribay`) con el OAuth personal del usuario. El router Gemini elige el agente según la petición; PDF y borradores de correo usan el agente elegido. Cada respuesta conserva su origen y el contexto enviado a Conversational Analytics se separa por agente. El mismo chat permite pasar de OEE a facturación. Las alertas programadas siguen disponibles solo para ventas; una alerta de producción se rechaza sin guardar una regla.
+
+El 23/11/2026 se verificaron en la web desplegada una consulta real de OEE de RB4 (ruta Aplicación Adhesiva) y una de facturación de piezas de octubre de 2026 (ruta Ventas Oribay), en la misma conversación. La revisión web `oribay-intelligence-pilot-00076-h2t` recibe el 100 % del tráfico. La consulta de OEE devolvió un desglose por referencia, aunque se preguntó por el OEE de la máquina en conjunto; se añadió una instrucción para exigir el nivel de agregación solicitado, pendiente de comprobar con otra consulta. La prueba no valida todavía PDFs ni correos basados en producción. Las secciones históricas de abajo describen revisiones anteriores y pueden contener estados ya superados.
+
 ## Integración de Google Drive en desarrollo
 
 La ruta Drive del chat permite buscar archivos con la cuenta del usuario, leer Google Docs, PDF, CSV y texto, crear carpetas, renombrar y mover archivos, y guardar los PDF de la biblioteca. El router prepara la acción y la conversación muestra la conexión necesaria. Los cambios requieren confirmación. Los demás formatos se abren en Drive. La acción «Usar en el chat» inserta un extracto visible y editable en la caja de conversación.

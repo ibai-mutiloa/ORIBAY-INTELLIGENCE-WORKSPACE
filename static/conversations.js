@@ -166,7 +166,7 @@
     activeId = null;
     activeTitle = '';
     salesHistory = [];
-    titleElement.textContent = 'Chat de ventas';
+    titleElement.textContent = 'Nuevo chat';
     workspaceChat.hidden = false;
     libraryView.hidden = true;
     document.querySelector('.composer').hidden = false;
@@ -180,7 +180,7 @@
   function makeAssistantCard(message) {
     const card = make('article', 'msg bot');
     card.append(make('div', 'eyebrow', 'ORIBAY · ASISTENTE'));
-    const routeNames = { ventas: 'Consulta de ventas', pdf: 'Informe', correo: 'Gmail · mensaje', drive: 'Google Drive', alerta: 'Alerta', error: 'Solicitud' };
+    const routeNames = { ventas: 'Consulta de ventas', adhesiva: 'Aplicación Adhesiva', pdf: 'Informe', correo: 'Gmail · mensaje', drive: 'Google Drive', alerta: 'Alerta', error: 'Solicitud' };
     const trace = make('div', 'tool-run');
     stage(trace, '✦', 'Conversación', routeNames[message.route] || 'Respuesta guardada', 'done');
     if (message.route === 'drive') stage(trace, serviceIcon('drive'), 'Google Drive', message.answer || 'Acción preparada', 'done');
@@ -258,7 +258,7 @@
     try {
       const data = await api(`/api/conversations/${encodeURIComponent(id)}`);
       activeId = data.id;
-      activeTitle = data.title || 'Chat de ventas';
+      activeTitle = data.title || 'Nuevo chat';
       titleElement.textContent = activeTitle;
       salesHistory = [];
       workspaceChat.replaceChildren();
@@ -269,8 +269,8 @@
           workspaceChat.append(make('div', 'msg user', previousQuestion));
         } else {
           workspaceChat.append(makeAssistantCard(message));
-          if (['ventas', 'pdf', 'correo'].includes(message.route) && previousQuestion) {
-            salesHistory.push({ route: 'ventas', question: previousQuestion, answer: message.answer || '' });
+          if (['ventas', 'adhesiva', 'pdf', 'correo'].includes(message.route) && previousQuestion) {
+            salesHistory.push({ route: message.data_agent || (message.route === 'adhesiva' ? 'adhesiva' : 'ventas'), question: previousQuestion, answer: message.answer || '' });
           }
           previousQuestion = '';
         }
@@ -311,7 +311,7 @@
       await refreshHistory();
       const data = await sendJson('/api/ask', { question, conversation_id: activeId, history: salesHistory.slice(-5) });
       run.replaceChildren();
-      const stepIcons = { Router: '✦', Regla: '◷', 'Ventas Oribay': '▥', PDF: '▤', Gmail: serviceIcon('gmail'), Drive: serviceIcon('drive') };
+      const stepIcons = { Router: '✦', Regla: '◷', 'Ventas Oribay': '▥', 'Aplicación Adhesiva': '▥', PDF: '▤', Gmail: serviceIcon('gmail'), Drive: serviceIcon('drive') };
       const completedSteps = data.steps?.length ? data.steps : [{ name: 'Router', detail: `Ruta elegida: ${data.route}`, status: 'done' }];
       completedSteps.forEach((item, index) => {
         const row = stage(run, stepIcons[item.name] || '✦', item.name, item.detail || 'Paso completado', item.status === 'error' ? 'error' : 'done');
@@ -335,7 +335,7 @@
         details.append(make('summary', '', 'Ver consultas SQL'), make('pre', '', data.sql.join('\n\n')));
         card.append(details);
       }
-      if (['ventas', 'pdf', 'correo'].includes(data.route)) salesHistory.push({ route: 'ventas', question, answer: data.answer || '' });
+      if (['ventas', 'adhesiva', 'pdf', 'correo'].includes(data.route)) salesHistory.push({ route: data.data_agent || 'ventas', question, answer: data.answer || '' });
       await refreshHistory();
     } catch (error) {
       setStage(router, 'error', 'No se pudo completar la solicitud');

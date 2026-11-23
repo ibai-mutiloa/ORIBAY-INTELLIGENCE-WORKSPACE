@@ -142,6 +142,7 @@ def restore_saved_analyses_as_chat_history():
             if len(json.dumps({"charts": charts, "tables": tables}, ensure_ascii=False).encode("utf-8")) > 650_000:
                 charts, tables = [], []
             assistant = {"kind": "assistant", "answer": answer, "route": payload.get("route", "ventas"),
+                         "data_agent": payload.get("data_agent", "ventas"),
                          "title": item.get("title", ""), "charts": charts, "tables": tables,
                          "created_at": (created + timedelta(microseconds=1)).isoformat(), "recovered": True}
             if not item.get("deleted"):
@@ -176,6 +177,7 @@ def save_conversation_result(conversation_ref, question, result):
     plan = result.get("plan") or {}
     conversation_message(conversation_ref, "assistant", answer=answer,
                          route=str(result.get("route", "ventas")),
+                         data_agent=str(result.get("data_agent", "ventas")),
                          title=str(plan.get("title", ""))[:180],
                          library_id=str(result.get("library_id", "")),
                          email_library_id=str((result.get("email") or {}).get("library_id", "")),
@@ -191,7 +193,7 @@ def save_conversation_result(conversation_ref, question, result):
     })
 
 
-def conversation_sales_context(conversation_ref, max_turns=5):
+def conversation_sales_context(conversation_ref, agent="ventas", max_turns=5):
     """Build a small, server-owned transcript for follow-up sales questions."""
     if conversation_ref is None:
         return []
@@ -207,7 +209,8 @@ def conversation_sales_context(conversation_ref, max_turns=5):
         elif item.get("kind") == "assistant":
             route = item.get("route")
             answer = str(item.get("answer", "")).strip()[:2400]
-            if pending_question and route in ("ventas", "pdf", "correo") and answer:
+            message_agent = item.get("data_agent") or ("adhesiva" if route == "adhesiva" else "ventas")
+            if pending_question and route in ("ventas", "adhesiva", "pdf", "correo") and message_agent == agent and answer:
                 transcript.extend([
                     {"userMessage": {"text": pending_question}},
                     {"systemMessage": {"text": {"parts": [answer]}}},
@@ -539,19 +542,19 @@ def resolve_email_recipient(value: str) -> str:
     return ""
 
 
-def query_agent(question: str, user: str = None, display_question: str = "", conversation_history=None) -> dict:
+def query_agent(question: str, user: str = None, display_question: str = "", conversation_history=None, agent="ventas") -> dict:
     owner = (user or getattr(g, "user_email", None) or os.environ.get("ORIBAY_USER_EMAIL", "")).lower()
     if not owner:
         raise UserBigQueryAuthError("No se pudo identificar la cuenta para consultar BigQuery.")
-    result = query_data_agent_as_user(owner, question, display_question, history=conversation_history)
+    result = query_data_agent_as_user(owner, question, display_question, history=conversation_history, agent=agent)
     if not result.get("answer") and not result.get("charts") and not result.get("tables"):
         app.logger.error("Respuesta MCP del agente sin artefactos reconocibles")
-        raise ValueError("Ventas Oribay no devolvió datos verificables")
+        raise ValueError("El agente de datos no devolvió datos verificables")
     answer = result.get("answer", "")
     if has_access_refusal(answer):
         app.logger.error("Ventas Oribay informó falta de acceso a los datos; se bloquea la generación de artefactos")
         raise SalesDataUnavailable(
-            "Ventas Oribay indica que no puede acceder a la vista corporativa de ventas. "
+            "El agente indica que no puede acceder a los datos solicitados. "
             "No se ha creado ningún borrador con datos incompletos. Revisa los permisos del agente e inténtalo de nuevo.")
     return result
 
@@ -769,24 +772,25 @@ def ask():
         conversation_ref, conversation = owned_conversation(conversation_id)
         if conversation_ref is None:
             return jsonify(error="No se encontró esta conversación."), 404
-        conversation_history = conversation_sales_context(conversation_ref)
         conversation_message(conversation_ref, "user", question=question[:2000])
         if conversation.get("title") == "Nueva conversación":
             conversation_ref.update({"title": question[:72], "updated_at": datetime.now(timezone.utc).isoformat()})
     try:
         history = payload.get("history") if isinstance(payload.get("history"), list) else None
         plan = decide(question, history)
+        if conversation_ref:
+            conversation_history = conversation_sales_context(conversation_ref, agent=plan.get("data_agent", "ventas"))
         result = execute_and_store(question, plan, conversation_history=conversation_history)
         if conversation_ref:
             save_conversation_result(conversation_ref, question, result)
             result["conversation_id"] = conversation_id
         return jsonify(**result)
     except Exception as exc:
-        app.logger.exception("Error consultando Ventas Oribay")
+        app.logger.exception("Error consultando el agente de datos")
         if conversation_ref:
             conversation_message(conversation_ref, "assistant", answer="No pude completar esta solicitud. Puedes intentarlo de nuevo.", route="error")
             conversation_ref.update({"updated_at": datetime.now(timezone.utc).isoformat(), "message_count": firestore.Increment(2)})
-        message = str(exc) if isinstance(exc, SalesDataUnavailable) else f"No se pudo consultar Ventas Oribay: {type(exc).__name__}"
+        message = str(exc) if isinstance(exc, (SalesDataUnavailable, ValueError)) else f"No se pudo consultar el agente de datos: {type(exc).__name__}"
         return jsonify(error=message), 502
 
 
@@ -804,7 +808,7 @@ def execute_request():
     payload = request.get_json(silent=True) or {}
     question = str(payload.get("question", "")).strip()
     plan = payload.get("plan") or {}
-    if not 1 <= len(question) <= 2000 or plan.get("route") not in ("ventas", "alerta", "pdf", "correo", "drive"):
+    if not 1 <= len(question) <= 2000 or plan.get("route") not in ("ventas", "adhesiva", "alerta", "pdf", "correo", "drive"):
         return jsonify(error="Solicitud no válida."), 400
     try:
         return jsonify(**execute_and_store(question, plan))
@@ -816,9 +820,15 @@ def execute_request():
 
 def execute_plan(question: str, plan: dict, conversation_history=None) -> dict:
         route = plan["route"]
+        data_agent = route if route in ("ventas", "adhesiva") else plan.get("data_agent", "ventas")
+        if data_agent not in ("ventas", "adhesiva"):
+            raise ValueError("Agente de datos no permitido")
+        plan["data_agent"] = data_agent
         plan.setdefault("user_request", question)
         steps = [{"name": "Router", "detail": f"Ruta elegida: {route} · {plan['router_mode']}", "status": "done"}]
         if route == "alerta":
+            if data_agent == "adhesiva":
+                raise ValueError("Las alertas de Aplicación Adhesiva aún no están configuradas. No se guardó ninguna regla.")
             steps.append({"name": "Regla", "detail": "Revisando métrica, periodo, umbral y frecuencia", "status": "done"})
             return dict(route=route, plan=plan, steps=steps, answer=plan.get("clarification") if plan.get("needs_clarification") else "Regla preparada. Revísala antes de guardarla.")
         if route == "drive":
@@ -862,6 +872,11 @@ def execute_plan(question: str, plan: dict, conversation_history=None) -> dict:
             return dict(route=route, plan=plan, steps=steps, drive=result,
                         answer="He preparado la acción en Drive. Elige el archivo y confirma cualquier cambio.")
         data_question = plan.get("data_question") or question
+        if data_agent == "adhesiva":
+            data_question += (" Responde exactamente al nivel solicitado (máquina, semana o artículo). "
+                              "Si se pide un OEE global de una máquina y periodo, usa la definición agregada del glosario; "
+                              "no sustituyas ese valor por una lista de OEE por referencia. "
+                              "Si no hay valor agregado verificable, indícalo expresamente.")
         data_question += (" Presenta las cifras con formato de España: punto para separar millares y coma para decimales "
                           "(por ejemplo, 2.083.849,69 €); conserva exactamente identificadores como AC032 y no cambies ni recalcules valores.")
         if route == "pdf":
@@ -872,30 +887,31 @@ def execute_plan(question: str, plan: dict, conversation_history=None) -> dict:
                 "no demostradas; señala límites de interpretación. Incluye las tablas de datos y un gráfico "
                 "adecuado con títulos, unidades y etiquetas legibles. No inventes cifras ni definiciones."
             )
-        data = query_agent(data_question, display_question=question, conversation_history=conversation_history)
-        steps.append({"name": "Ventas Oribay", "detail": "Consulté el agente de datos y recibí sus resultados", "status": "done"})
+        data = query_agent(data_question, display_question=question, conversation_history=conversation_history, agent=data_agent)
+        steps.append({"name": "Aplicación Adhesiva" if data_agent == "adhesiva" else "Ventas Oribay", "detail": "Consulté el agente de datos y recibí sus resultados", "status": "done"})
         if route == "pdf":
             data["source_answer"] = data.get("answer", "")
-            data["answer"] = draft_pdf_analysis(question, data.get("answer", ""), data.get("tables", []))
+            data["answer"] = draft_pdf_analysis(question, data.get("answer", ""), data.get("tables", []), data_agent=data_agent)
             steps.append({"name": "PDF", "detail": "Documento preparado para descargar", "status": "done"})
         elif route == "correo":
             steps.append({"name": "Gmail", "detail": "Mensaje preparado para revisión; todavía no se ha enviado", "status": "done"})
             recipient = resolve_email_recipient(plan.get("recipient")) or current_owner()
-            draft = draft_business_email(question, data.get("answer", ""), plan.get("subject") or "")
+            draft = draft_business_email(question, data.get("answer", ""), plan.get("subject") or "", data_agent=data_agent)
             data["email"] = {"to": recipient, **draft, "sender": current_owner()}
-        return dict(route=route, plan=plan, steps=steps, **data)
+        return dict(route=route, data_agent=data_agent, plan=plan, steps=steps, **data)
 
 
 def execute_and_store(question: str, plan: dict, conversation_history=None) -> dict:
     result = execute_plan(question, plan, conversation_history=conversation_history)
     route = result.get("route")
-    if route in ("ventas", "pdf", "correo") and (result.get("answer") or result.get("charts") or result.get("tables")):
+    if route in ("ventas", "adhesiva", "pdf", "correo") and (result.get("answer") or result.get("charts") or result.get("tables")):
         saved_charts = result.get("charts", [])[:6]
         while saved_charts and len(json.dumps(saved_charts, ensure_ascii=False).encode("utf-8")) > 650_000:
             saved_charts.pop()
         result["library_id"] = save_library_item("analysis", question[:180], {
             "question": question[:2000], "answer": result.get("answer", "")[:12000],
-            "charts": saved_charts, "tables": result.get("tables", [])[:6], "route": route})
+            "charts": saved_charts, "tables": result.get("tables", [])[:6], "route": route,
+            "data_agent": result.get("data_agent", "ventas")})
     if route == "correo" and result.get("email"):
         mail = result["email"]
         result["email"]["library_id"] = save_library_item("email", mail["subject"], {**mail, "status": "draft"})
@@ -905,10 +921,12 @@ def execute_and_store(question: str, plan: dict, conversation_history=None) -> d
 @app.post("/api/pdf")
 def pdf():
     data = request.get_json(silent=True) or {}
+    data_agent = data.get("data_agent") if data.get("data_agent") in ("ventas", "adhesiva") else "ventas"
+    source_name = "Aplicación Adhesiva" if data_agent == "adhesiva" else "Ventas Oribay"
     answer = str(data.get("answer", ""))[:12000]
     charts = data.get("charts") or []
     tables = data.get("tables") or []
-    title = str(data.get("title") or "Informe comercial Oribay").strip()[:180]
+    title = str(data.get("title") or ("Informe de Aplicación Adhesiva" if data_agent == "adhesiva" else "Informe comercial Oribay")).strip()[:180]
     question = str(data.get("question") or "").strip()[:2000]
     total_image_bytes = sum(len(chart.get("image", "")) for chart in charts[:6] if isinstance(chart, dict))
     if total_image_bytes > 12_000_000:
@@ -929,7 +947,7 @@ def pdf():
     doc = SimpleDocTemplate(output, pagesize=A4, rightMargin=21*mm, leftMargin=21*mm, topMargin=21*mm, bottomMargin=19*mm, title=title, author="Oribay Intelligence", subject=question[:250])
     import html
     story = [Spacer(1, 8*mm), Paragraph(html.escape(title), styles["ReportTitle"]),
-             Paragraph("ANÁLISIS COMERCIAL  ·  VENTAS ORIBAY", styles["ReportSubtitle"]),
+             Paragraph("ANÁLISIS  ·  " + source_name.upper(), styles["ReportSubtitle"]),
              Spacer(1, 2*mm), Paragraph(f"Preparado el {datetime.now().astimezone().strftime('%d/%m/%Y · %H:%M')}", styles["ReportMeta"])]
     if question:
         story.extend([Spacer(1, 4*mm), Paragraph("SOLICITUD", styles["ReportMeta"]), Paragraph(html.escape(question), styles["ReportBody"])])
@@ -1014,7 +1032,7 @@ def pdf():
             except Exception:
                 app.logger.warning("Se omitió un gráfico no válido del PDF")
     def footer(page_canvas, document):
-        page_canvas.saveState(); page_canvas.setStrokeColor(colors.HexColor("#dce4ee")); page_canvas.line(21*mm,15*mm,A4[0]-21*mm,15*mm); page_canvas.setFont("Helvetica",8); page_canvas.setFillColor(colors.HexColor("#7a8797")); page_canvas.drawString(21*mm,10*mm,"Oribay Intelligence  ·  Fuente: Ventas Oribay"); page_canvas.drawRightString(A4[0]-21*mm,10*mm,f"{document.page}"); page_canvas.restoreState()
+        page_canvas.saveState(); page_canvas.setStrokeColor(colors.HexColor("#dce4ee")); page_canvas.line(21*mm,15*mm,A4[0]-21*mm,15*mm); page_canvas.setFont("Helvetica",8); page_canvas.setFillColor(colors.HexColor("#7a8797")); page_canvas.drawString(21*mm,10*mm,"Oribay Intelligence  ·  Fuente: " + source_name); page_canvas.drawRightString(A4[0]-21*mm,10*mm,f"{document.page}"); page_canvas.restoreState()
     doc.build(story, onFirstPage=footer, onLaterPages=footer)
     output.seek(0)
     pdf_bytes = output.getvalue()

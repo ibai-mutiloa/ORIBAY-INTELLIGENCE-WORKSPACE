@@ -7,15 +7,16 @@ import re
 from google.genai import Client, types
 from google.oauth2.credentials import Credentials
 
-ROUTES = {"ventas", "alerta", "pdf", "correo", "drive"}
+ROUTES = {"ventas", "adhesiva", "alerta", "pdf", "correo", "drive"}
+ADHESIVE_TERMS = re.compile(r"adhesiv|\b(?:oee|robot(?:es)?|m[aá]quinas?|rb\d+|balanceo|balanceios|producci[oó]n|rendimiento|paradas|te[oó]ricos?|turnos?|calidad)\b", re.IGNORECASE)
 SYSTEM = """Eres el router de Oribay. Devuelve SOLO JSON con:
-route (ventas|alerta|pdf|correo|drive), data_question, title, recipient, subject,
+route (ventas|adhesiva|alerta|pdf|correo|drive), data_agent (ventas|adhesiva), data_question, title, recipient, subject,
 drive_action (search|read|save_pdf|create_folder|rename|move), drive_query,
 drive_file, drive_destination, drive_path,
 alert_metric, alert_operator (>|>=|<|<=), alert_threshold (número o null),
 alert_period, alert_frequency, alert_filters, needs_clarification, clarification,
 context_used (boolean), context_reference (texto breve).
-Elige una ruta principal. Para PDF y correo, data_question pide a Ventas Oribay
+Elige adhesiva para aplicación adhesiva, OEE, robots, producción, calidad o balanceo de carga; ventas para facturación, clientes, importes y ventas. En preguntas de seguimiento breves hereda data_agent del análisis pertinente más reciente. No mezcles datos de agentes distintos. Para PDF y correo, data_question pide al agente elegido
 los datos estrictamente necesarios. Un mensaje o correo puntual que acompaña un análisis
 (por ejemplo, «resume los últimos 3 meses para AC032 y envíame un mensaje») va por correo,
 nunca por alerta. «Envíame/mándame un mensaje» sin otro destinatario significa preparar
@@ -48,17 +49,22 @@ en context_reference. No elijas enviar correo; solo redactar.
 No afirmes que hayas consultado datos ni ejecutado herramientas."""
 
 
-def _fallback(message: str) -> dict:
+def _fallback(message: str, history: list | None = None) -> dict:
     lower = message.lower()
     one_time_message = bool(re.search(r"\b(?:env[ií]ame|m[aá]ndame|env[ií]a|manda)\b.{0,35}\b(?:mensaje|correo|email|gmail)\b|\b(?:mensaje|correo|email|gmail)\b.{0,35}\b(?:env[ií]ame|m[aá]ndame)\b", lower))
     recurring_alert = bool(re.search(r"\b(?:cada\s+(?:d[ií]a|semana|mes)|cuando\s+(?:supere|baje|sea|llegue)|av[ií]same\s+(?:cuando|si)|notif[ií]came\s+cuando|vigila|monitoriza)\b", lower))
     drive_request = bool(re.search(r"\b(?:drive|mi unidad|mis archivos|carpeta de google|path:)\b", lower))
+    data_agent = "adhesiva" if ADHESIVE_TERMS.search(lower) else "ventas"
+    if data_agent == "ventas" and not re.search(r"ventas?|factur|clientes?|importes?|pedido", lower):
+        previous = next((item for item in reversed(history or []) if isinstance(item, dict) and item.get("route") in ("ventas", "adhesiva")), None)
+        if previous and previous.get("route") == "adhesiva":
+            data_agent = "adhesiva"
     route = ("drive" if drive_request else
              "alerta" if recurring_alert else
              "correo" if one_time_message else
              "alerta" if re.search(r"\b(?:alerta|aviso)\b", lower) else
              "pdf" if re.search(r"pdf|informe|documento", lower) else
-             "correo" if re.search(r"correo|email|gmail|redacta", lower) else "ventas")
+             "correo" if re.search(r"correo|email|gmail|redacta", lower) else data_agent)
     drive_action = ("save_pdf" if re.search(r"\b(?:guarda|guardar|sube|subir)\b.*\b(?:pdf|informe)\b", lower) else
                     "create_folder" if re.search(r"\b(?:crea|crear|nueva)\b.*\bcarpeta\b", lower) else
                     "rename" if re.search(r"\b(?:renombra|renombrar|cambia el nombre)\b", lower) else
@@ -73,7 +79,7 @@ def _fallback(message: str) -> dict:
         drive_query = ""
     folder_match = re.search(r"\bcarpeta\s+(?:llamada\s+)?(.+?)(?:\s+en\s+(?:mi\s+)?drive|$)", message, re.IGNORECASE)
     drive_file = folder_match.group(1).strip()[:120] if drive_action == "create_folder" and folder_match else ""
-    return {"route": route, "data_question": message, "title": "Solicitud Oribay",
+    return {"route": route, "data_agent": data_agent, "data_question": message, "title": "Solicitud Oribay",
             "recipient": "", "subject": "", "alert_metric": "", "alert_operator": "",
             "alert_threshold": None, "alert_period": "", "alert_frequency": "",
             "alert_filters": "", "needs_clarification": route == "alerta",
@@ -90,18 +96,24 @@ def decide(message: str, history: list | None = None) -> dict:
                         credentials=Credentials(token=token) if token else None)
         safe_history = []
         for item in (history or [])[-5:]:
-            if isinstance(item, dict) and item.get("route") == "ventas":
-                safe_history.append({"question": str(item.get("question", ""))[:500],
+            if isinstance(item, dict) and item.get("route") in ("ventas", "adhesiva"):
+                safe_history.append({"data_agent": item.get("route"), "question": str(item.get("question", ""))[:500],
                                      "answer": str(item.get("answer", ""))[:1200]})
         response = client.models.generate_content(
             model=os.environ.get("ORIBAY_ROUTER_MODEL", "gemini-2.5-flash"),
-            contents=json.dumps({"previous_sales_analyses": safe_history,
+            contents=json.dumps({"previous_analyses": safe_history,
                                  "current_user_request": message}, ensure_ascii=False),
             config=types.GenerateContentConfig(system_instruction=SYSTEM, response_mime_type="application/json", temperature=0),
         )
         result = json.loads(response.text)
         if result.get("route") not in ROUTES:
             raise ValueError("Ruta desconocida")
+        if result["route"] in ("ventas", "adhesiva"):
+            result["data_agent"] = result["route"]
+        elif result.get("data_agent") not in ("ventas", "adhesiva"):
+            result["data_agent"] = "adhesiva" if ADHESIVE_TERMS.search(message) else "ventas"
+        if result["route"] in ("pdf", "correo", "alerta") and ADHESIVE_TERMS.search(message) and not re.search(r"factur|ventas?|clientes?|pedido", message, re.IGNORECASE):
+            result["data_agent"] = "adhesiva"
         if result.get("route") == "drive" and result.get("drive_action") not in {"search", "read", "save_pdf", "create_folder", "rename", "move"}:
             result["drive_action"] = "search"
         if result.get("route") == "alerta" and result.get("context_used") and safe_history:
@@ -120,7 +132,7 @@ def decide(message: str, history: list | None = None) -> dict:
         return result
     except Exception as exc:
         logging.getLogger(__name__).warning("Router Gemini no disponible: %s", exc)
-        return _fallback(message)
+        return _fallback(message, history)
 
 
 def answer_from_drive(question: str, evidence: list[dict]) -> str:
@@ -147,7 +159,7 @@ def answer_from_drive(question: str, evidence: list[dict]) -> str:
         return "Encontré estos archivos relacionados: " + ", ".join(item["name"] for item in evidence[:5]) + "."
 
 
-def draft_business_email(user_request: str, verified_answer: str, suggested_subject: str = "") -> dict:
+def draft_business_email(user_request: str, verified_answer: str, suggested_subject: str = "", data_agent="ventas") -> dict:
     """Turn verified sales output into a concise, editable business email."""
     try:
         token = os.environ.get("ORIBAY_TEST_ACCESS_TOKEN")
@@ -155,9 +167,9 @@ def draft_business_email(user_request: str, verified_answer: str, suggested_subj
                         credentials=Credentials(token=token) if token else None)
         response = client.models.generate_content(
             model=os.environ.get("ORIBAY_ROUTER_MODEL", "gemini-2.5-flash"),
-            contents=json.dumps({"request": user_request[:2000], "verified_sales_response": verified_answer[:10000], "subject_hint": suggested_subject[:250]}, ensure_ascii=False),
+            contents=json.dumps({"request": user_request[:2000], "verified_agent_response": verified_answer[:10000], "data_agent": data_agent, "subject_hint": suggested_subject[:250]}, ensure_ascii=False),
             config=types.GenerateContentConfig(
-                system_instruction=("Redacta un correo comercial profesional y natural en español de España. Devuelve SOLO JSON con subject y body. "
+                system_instruction=("Redacta un correo profesional y natural en español de España. Devuelve SOLO JSON con subject y body. "
                                     "Usa exclusivamente los hechos y cifras del texto verificado, no inventes nada, no menciones SQL ni la IA. "
                                     "Escribe las cifras con convención española: punto para millares y coma para decimales (por ejemplo, 2.083.849,69 €); "
                                     "usa € con formato claro, fechas en español y conserva sin cambios los identificadores alfanuméricos como AC032. "
@@ -174,15 +186,16 @@ def draft_business_email(user_request: str, verified_answer: str, suggested_subj
     return {"subject": suggested_subject or "Resumen comercial Oribay", "body": verified_answer[:30000]}
 
 
-def draft_pdf_analysis(user_request: str, verified_answer: str, verified_tables: list | None = None) -> str:
+def draft_pdf_analysis(user_request: str, verified_answer: str, verified_tables: list | None = None, data_agent="ventas") -> str:
     """Write a decision-ready Spanish analysis using only the sales agent's evidence."""
     evidence = {
         "request": user_request[:2000],
         "verified_response": verified_answer[:12000],
+        "data_agent": data_agent,
         "verified_tables": [str(item)[:5000] for item in (verified_tables or [])[:6]],
     }
     fallback = ("## Alcance y resultados\n\n" + verified_answer[:12000] +
-                "\n\n## Lectura y límites\n\nEste informe presenta los resultados devueltos por Ventas Oribay. "
+                "\n\n## Lectura y límites\n\nEste informe presenta los resultados devueltos por " + ("Aplicación Adhesiva" if data_agent == "adhesiva" else "Ventas Oribay") + ". "
                 "La respuesta disponible no incluye suficiente evidencia para atribuir causas ni validar factores externos.")
     try:
         token = os.environ.get("ORIBAY_TEST_ACCESS_TOKEN")
@@ -193,7 +206,7 @@ def draft_pdf_analysis(user_request: str, verified_answer: str, verified_tables:
             contents=json.dumps(evidence, ensure_ascii=False),
             config=types.GenerateContentConfig(
                 system_instruction=(
-                    "Redacta el cuerpo de un informe comercial ejecutivo, detallado y listo para guardar, "
+                    "Redacta el cuerpo de un informe ejecutivo, detallado y listo para guardar, "
                     "en español natural y profesional. Devuelve Markdown limpio con títulos ## y listas breves. "
                     "Estructura: Resumen ejecutivo; Hallazgos principales; Evolución y comparativas; "
                     "Interpretación; Alcance y limitaciones. Omite secciones sin datos. Usa exclusivamente "

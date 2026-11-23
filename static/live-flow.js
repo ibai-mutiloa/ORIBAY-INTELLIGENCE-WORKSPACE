@@ -26,11 +26,11 @@ workspaceForm.onsubmit = async event => {
       ? stage(run, serviceIcon('drive'), 'Google Drive', 'Comprobando conexión y archivos', 'running')
       : plan.route === 'alerta'
       ? stage(run, '◷', 'Preparando la regla', 'Extrayendo métrica, umbral y frecuencia', 'running')
-      : stage(run, '▥', 'Consultando Ventas Oribay', 'Esperando datos y gráficos del agente', 'running');
+      : stage(run, '▥', plan.data_agent === 'adhesiva' ? 'Consultando Aplicación Adhesiva' : 'Consultando Ventas Oribay', 'Esperando datos y gráficos del agente', 'running');
     down();
     const data = await sendJson('/api/execute', {question, plan});
-    if (data.route === 'ventas' && data.answer) {
-      salesHistory.push({route:'ventas', question, answer:data.answer});
+    if (['ventas', 'adhesiva', 'pdf', 'correo'].includes(data.route) && data.answer) {
+      salesHistory.push({route:data.data_agent || 'ventas', question, answer:data.answer});
       if (salesHistory.length > 5) salesHistory.shift();
     }
     setStage(active, 'done', plan.route === 'alerta' ? 'Regla lista para revisión' : plan.route === 'drive' ? 'Acción lista para revisar' : 'Respuesta analítica recibida');
