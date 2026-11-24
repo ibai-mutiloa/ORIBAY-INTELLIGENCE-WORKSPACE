@@ -222,11 +222,12 @@
   function makeAssistantCard(message) {
     const card = make('article', 'msg bot');
     card.append(make('div', 'eyebrow', 'ORIBAY · ASISTENTE'));
-    const routeNames = { ventas: 'Consulta de ventas', adhesiva: 'Aplicación Adhesiva', pdf: 'Informe', correo: 'Gmail · mensaje', drive: 'Google Drive', alerta: 'Alerta', error: 'Solicitud' };
+    const routeNames = { ventas: 'Consulta de ventas', adhesiva: 'Aplicación Adhesiva', pdf: 'Informe', presentacion: 'Presentación', correo: 'Gmail · mensaje', drive: 'Google Drive', alerta: 'Alerta', error: 'Solicitud' };
     const trace = make('div', 'tool-run');
     stage(trace, '✦', 'Conversación', routeNames[message.route] || 'Respuesta guardada', 'done');
     if (message.route === 'drive') stage(trace, serviceIcon('drive'), 'Google Drive', message.answer || 'Acción preparada', 'done');
     if (message.route === 'correo') stage(trace, serviceIcon('gmail'), 'Gmail', 'Borrador de correo', 'done');
+    if (message.presentation?.url) stage(trace, serviceIcon('drive'), 'Google Slides', 'Presentación guardada en Drive', 'done');
     card.append(trace);
     if (message.answer) {
       if (['ventas', 'adhesiva'].includes(message.route) && !/^\s*#{1,3}\s/m.test(message.answer)) {
@@ -253,6 +254,13 @@
       documentLink.href = `/api/library/${encodeURIComponent(message.document_library_id)}/download`;
       documentLink.setAttribute('download', '');
       card.append(documentLink);
+    }
+    if (message.presentation?.url) {
+      const slideLink = make('a', 'library-action', 'Abrir presentación editable');
+      slideLink.href = message.presentation.url;
+      slideLink.target = '_blank';
+      slideLink.rel = 'noopener noreferrer';
+      card.append(slideLink);
     }
     if (message.route === 'alerta' && message.plan) {
       const p = message.plan;
@@ -359,7 +367,7 @@
       await refreshHistory();
       const data = await sendJson('/api/ask', { question, conversation_id: activeId, history: salesHistory.slice(-5) });
       run.replaceChildren();
-      const stepIcons = { Router: '✦', Regla: '◷', 'Ventas Oribay': '▥', 'Aplicación Adhesiva': '▥', PDF: '▤', Gmail: serviceIcon('gmail'), Drive: serviceIcon('drive') };
+      const stepIcons = { Router: '✦', Regla: '◷', 'Ventas Oribay': '▥', 'Aplicación Adhesiva': '▥', PDF: '▤', 'Google Slides': serviceIcon('drive'), Gmail: serviceIcon('gmail'), Drive: serviceIcon('drive') };
       const completedSteps = data.steps?.length ? data.steps : [{ name: 'Router', detail: `Ruta elegida: ${data.route}`, status: 'done' }];
       completedSteps.forEach((item, index) => {
         const row = stage(run, stepIcons[item.name] || '✦', item.name, item.detail || 'Paso completado', item.status === 'error' ? 'error' : 'done');
@@ -381,6 +389,13 @@
       }
       for (const table of data.tables || []) appendTable(card, table);
       if (data.route === 'pdf') showPdf(card, data);
+      if (data.route === 'presentacion' && data.presentation?.url) {
+        const link = make('a', 'library-action primary-action', 'Abrir presentación editable');
+        link.href = data.presentation.url;
+        link.target = '_blank';
+        link.rel = 'noopener noreferrer';
+        card.append(link);
+      }
       if (data.route === 'correo' && data.email) await showEmail(card, data.email);
       if (data.route === 'drive') await showDriveAction(card, data);
       if (data.sql?.length) {
@@ -388,7 +403,7 @@
         details.append(make('summary', '', 'Ver consultas SQL'), make('pre', '', data.sql.join('\n\n')));
         card.append(details);
       }
-      if (['ventas', 'adhesiva', 'pdf', 'correo'].includes(data.route)) salesHistory.push({ route: data.data_agent || 'ventas', question, answer: data.answer || '' });
+      if (['ventas', 'adhesiva', 'pdf', 'correo', 'presentacion'].includes(data.route)) salesHistory.push({ route: data.data_agent || 'ventas', question, answer: data.answer || '' });
       await refreshHistory();
     } catch (error) {
       setStage(router, 'error', 'No se pudo completar la solicitud');

@@ -61,8 +61,8 @@ async function showPdf(card,data){const actions=make('div','actions'),button=mak
 const libraryView=document.querySelector('#library-view'),libraryList=document.querySelector('#library-list');
 let activeFilter='all', libraryItems=[], libraryQuery='';
 let titleBeforeSpace='Chat de ventas';
-const typeNames={analysis:'Análisis',alert:'Aviso',document:'Informe',email:'Correo'};
-const typeIcons={analysis:'▥',alert:'◷',document:'▤',email:'✉'};
+const typeNames={analysis:'Análisis',alert:'Aviso',document:'Informe',presentation:'Presentación',email:'Correo'};
+const typeIcons={analysis:'▥',alert:'◷',document:'▤',presentation:'▣',email:'✉'};
 const statusNames={active:'Activo',draft:'Borrador',paused:'En pausa',sent:'Enviado'};
 async function getLibrary(url){const r=await fetch(url),d=await r.json();if(!r.ok)throw Error(d.error||'No se pudo cargar tu espacio');return d}
 function renderSpaceSummary(){
@@ -88,6 +88,9 @@ function makePreviewButton(card,item,label){const button=make('button','library-
   panel.append(make('p','library-question','Para: '+(payload.to||'Sin destinatario')));panel.append(make('p','library-question','Asunto: '+(payload.subject||detail.title||'')));panel.append(make('pre','email-preview',payload.body||'No hay contenido guardado.'));
  }else if(item.type==='alert'){
   const rule=payload.rule||detail.rule||{};panel.append(make('p','library-question','Cuando '+(rule.alert_metric||'la métrica')+' '+(rule.alert_operator||'>')+' '+(rule.alert_threshold??'—')+' · '+(rule.alert_period||'periodo pendiente')+' · '+(rule.alert_frequency||'frecuencia pendiente')));panel.append(make('p','library-summary','Se enviará el aviso a '+(rule.email||sessionEmail||'tu correo')));
+ }else if(item.type==='presentation'){
+  panel.append(make('p','library-question',payload.question||'Presentación creada desde la conversación.'));
+  if(payload.url){const link=make('a','library-action primary-action','Abrir en Google Slides');link.href=payload.url;link.target='_blank';link.rel='noopener noreferrer';panel.append(link)}
  }else if(item.type==='document'){
   panel.append(make('p','library-question',payload.question||item.question||'Informe generado desde tu conversación.'));if(payload.summary)panel.append(make('div','answer',payload.summary));
  }
@@ -108,6 +111,7 @@ function renderLibrary(){
   const actions=make('div','library-actions');
   if(item.type==='analysis')actions.append(makePreviewButton(card,item,'Ver análisis'));
   if(item.type==='email')actions.append(makePreviewButton(card,item,'Ver correo'));
+  if(item.type==='presentation')actions.append(makePreviewButton(card,item,'Ver presentación'));
   if(item.type==='alert'){
    actions.append(makePreviewButton(card,item,'Ver aviso'));
    const edit=make('button','library-action','Editar');edit.onclick=()=>editAlertCard(card,item);actions.append(edit);

@@ -7,10 +7,10 @@ import re
 from google.genai import Client, types
 from google.oauth2.credentials import Credentials
 
-ROUTES = {"ventas", "adhesiva", "alerta", "pdf", "correo", "drive"}
+ROUTES = {"ventas", "adhesiva", "alerta", "pdf", "correo", "drive", "presentacion"}
 ADHESIVE_TERMS = re.compile(r"adhesiv|\b(?:oee|robot(?:es)?|m[aá]quinas?|rb\d+|balanceo|balanceios|producci[oó]n|rendimiento|paradas|te[oó]ricos?|turnos?|calidad)\b", re.IGNORECASE)
 SYSTEM = """Eres el router de Oribay. Devuelve SOLO JSON con:
-route (ventas|adhesiva|alerta|pdf|correo|drive), data_agent (ventas|adhesiva), data_question, title, recipient, subject,
+route (ventas|adhesiva|alerta|pdf|correo|drive|presentacion), data_agent (ventas|adhesiva), data_question, title, recipient, subject,
 drive_action (search|read|save_pdf|create_folder|rename|move), drive_query,
 drive_file, drive_destination, drive_path,
 alert_metric, alert_operator (>|>=|<|<=), alert_threshold (número o null),
@@ -28,6 +28,9 @@ Elige drive cuando el usuario quiera buscar, leer u organizar archivos de Google
 o guardar allí un PDF existente. No ejecutes cambios en Drive: prepara la acción para
 que el usuario elija el archivo y confirme. Si pide crear un nuevo informe y guardarlo
 en Drive, elige pdf y conserva en el título la intención de guardarlo allí.
+Elige presentacion cuando pida diapositivas, una presentación, PowerPoint o Google Slides.
+Consulta el agente de datos correspondiente y prepara una presentación editable con la
+plantilla corporativa; no afirmes que está guardada hasta recibir el enlace de Drive.
 Si aparece path:apps/ia, drive_path es apps/ia; no metas path: en drive_query.
 drive_query contiene solo el tema o nombre buscado, sin verbos ni palabras de relleno.
 Para buscar o leer, responde después de consultar los archivos; no pidas al usuario
@@ -60,7 +63,8 @@ def _fallback(message: str, history: list | None = None) -> dict:
         previous = next((item for item in reversed(history or []) if isinstance(item, dict) and item.get("route") in ("ventas", "adhesiva")), None)
         if previous and previous.get("route") == "adhesiva":
             data_agent = "adhesiva"
-    route = ("drive" if drive_request else
+    route = ("presentacion" if re.search(r"presentaci[oó]n|diapositivas?|powerpoint|google slides|\bpptx?\b", lower) else
+             "drive" if drive_request else
              "alerta" if recurring_alert else
              "correo" if one_time_message else
              "alerta" if re.search(r"\b(?:alerta|aviso)\b", lower) else
@@ -109,11 +113,13 @@ def decide(message: str, history: list | None = None) -> dict:
         result = json.loads(response.text)
         if result.get("route") not in ROUTES:
             raise ValueError("Ruta desconocida")
+        if re.search(r"presentaci[oó]n|diapositivas?|powerpoint|google slides|\bpptx?\b", message, re.IGNORECASE):
+            result["route"] = "presentacion"
         if result["route"] in ("ventas", "adhesiva"):
             result["data_agent"] = result["route"]
         elif result.get("data_agent") not in ("ventas", "adhesiva"):
             result["data_agent"] = "adhesiva" if ADHESIVE_TERMS.search(message) else "ventas"
-        if result["route"] in ("pdf", "correo", "alerta") and ADHESIVE_TERMS.search(message) and not re.search(r"factur|ventas?|clientes?|pedido", message, re.IGNORECASE):
+        if result["route"] in ("pdf", "correo", "alerta", "presentacion") and ADHESIVE_TERMS.search(message) and not re.search(r"factur|ventas?|clientes?|pedido", message, re.IGNORECASE):
             result["data_agent"] = "adhesiva"
         if result.get("route") == "drive" and result.get("drive_action") not in {"search", "read", "save_pdf", "create_folder", "rename", "move"}:
             result["drive_action"] = "search"

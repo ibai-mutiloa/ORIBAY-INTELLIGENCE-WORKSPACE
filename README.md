@@ -1,5 +1,11 @@
 # Oribay Intelligence
 
+## Presentaciones editables (piloto)
+
+La ruta `presentacion` consulta Ventas Oribay o Aplicación Adhesiva con la identidad del usuario. Si la petición menciona expresamente ambos ámbitos, consulta los dos agentes por separado y no crea el archivo si falta evidencia de uno de ellos. Gemini redacta tres secciones con los resultados recibidos y Google Slides crea una presentación editable de seis diapositivas en el Drive personal del usuario. El archivo se basa en la plantilla privada `gs://aad-analitica-oee-oribay-library/templates/oribay-presentation-20261124.pptx`, proporcionada por Oribay, y el enlace queda en la conversación y en Tu espacio. Google Slides API debe estar habilitada en `aad-analitica-oee`; la autorización de Drive existente sirve para crear el documento.
+
+Esta primera versión genera texto y cifras; todavía no inserta gráficos ni tablas visuales, y requiere revisión humana antes de compartir. La conversión de la plantilla y el diseño final deben comprobarse con una cuenta de usuario conectada. No se ha desplegado ni probado en Cloud Run en esta fase.
+
 ## Apariencia corporativa
 
 La interfaz usa la paleta, tipografía Roboto y logotipo oficial de Oribay Group en `static/corporate-theme.css` y `static/oribay-logo.png`. La revisión de Cloud Run `oribay-intelligence-pilot-00088-jas` se publicó el 23/11/2026. El cambio es visual: conserva el enrutador, las conversaciones, las herramientas y las animaciones del chat.

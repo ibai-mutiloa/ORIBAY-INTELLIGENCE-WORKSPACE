@@ -34,6 +34,7 @@ from user_data_auth import (UserBigQueryAuthError, begin_oauth, disconnect_oauth
                             finish_oauth, is_connected, query_data_agent_as_user, list_data_agents_as_user, _redirect_uri)
 from user_data_auth import drive_is_connected
 import drive_tools
+from presentations import create_presentation
 
 app = Flask(__name__)
 PROJECT = "aad-analitica-oee"
@@ -181,6 +182,7 @@ def save_conversation_result(conversation_ref, question, result):
                          title=str(plan.get("title", ""))[:180],
                          library_id=str(result.get("library_id", "")),
                          email_library_id=str((result.get("email") or {}).get("library_id", "")),
+                         presentation=result.get("presentation") or {},
                          plan={key: plan.get(key) for key in (
                              "alert_metric", "alert_operator", "alert_threshold", "alert_period",
                              "alert_frequency", "alert_filters", "needs_clarification", "clarification",
@@ -873,6 +875,7 @@ def conversation_get(conversation_id):
                          "library_id": message.get("library_id", ""),
                          "email_library_id": email_library_id,
                          "email_snapshot": email_snapshot, "email_invalid": email_invalid,
+                         "presentation": message.get("presentation", {}),
                          "document_library_id": message.get("document_library_id", ""),
                          "charts": message.get("charts", []), "tables": message.get("tables", []),
                          "plan": message.get("plan", {})})
@@ -951,7 +954,7 @@ def execute_request():
     payload = request.get_json(silent=True) or {}
     question = str(payload.get("question", "")).strip()
     plan = payload.get("plan") or {}
-    if not 1 <= len(question) <= 2000 or plan.get("route") not in ("ventas", "adhesiva", "alerta", "pdf", "correo", "drive"):
+    if not 1 <= len(question) <= 2000 or plan.get("route") not in ("ventas", "adhesiva", "alerta", "pdf", "correo", "drive", "presentacion"):
         return jsonify(error="Solicitud no válida."), 400
     try:
         return jsonify(**execute_and_store(question, plan))
@@ -1014,6 +1017,8 @@ def execute_plan(question: str, plan: dict, conversation_history=None) -> dict:
                                        for d in docs if d.to_dict().get("type") == "document" and not d.to_dict().get("deleted")][:30]
             return dict(route=route, plan=plan, steps=steps, drive=result,
                         answer="He preparado la acción en Drive. Elige el archivo y confirma cualquier cambio.")
+        if route == "presentacion" and not drive_is_connected(current_owner()):
+            raise UserBigQueryAuthError("Conecta Google Drive con tu cuenta para crear una presentación.")
         data_question = plan.get("data_question") or question
         if data_agent == "adhesiva" and conversation_history:
             prior_question = conversation_history[-2]["userMessage"]["text"]
@@ -1032,7 +1037,7 @@ def execute_plan(question: str, plan: dict, conversation_history=None) -> dict:
                               "Si no hay valor agregado verificable, indícalo expresamente.")
         data_question += (" Presenta las cifras con formato de España: punto para separar millares y coma para decimales "
                           "(por ejemplo, 2.083.849,69 €); conserva exactamente identificadores como AC032 y no cambies ni recalcules valores.")
-        if route == "pdf":
+        if route in ("pdf", "presentacion"):
             data_question += (
                 " Devuelve un análisis detallado y verificable para un informe ejecutivo: identifica "
                 "el periodo, alcance y filtros; presenta los principales hallazgos cuantitativos; compara "
@@ -1047,9 +1052,29 @@ def execute_plan(question: str, plan: dict, conversation_history=None) -> dict:
         data = query_agent(data_question, display_question=question, conversation_history=conversation_history, agent=data_agent)
         if route == "ventas":
             data["answer"] = reconcile_top_two_share(data.get("answer", ""), data.get("tables", []))
-        if route == "pdf" and missing_report_evidence(data):
-            raise ValueError("El agente no ha devuelto datos suficientes para crear el PDF. "
-                             "No se ha preparado ningún documento; indica la máquina y el periodo o vuelve a consultar.")
+        if route in ("pdf", "presentacion") and missing_report_evidence(data):
+            raise ValueError("El agente no ha devuelto datos suficientes para crear el documento. "
+                             "Indica el alcance y periodo o vuelve a consultar.")
+        if route == "presentacion":
+            evidence = [{"agent": data_agent, "answer": data.get("answer", "")[:10000],
+                         "tables": data.get("tables", [])[:5]}]
+            if re.search(r"factur|ventas?|clientes?|pedido", question, re.IGNORECASE) and re.search(
+                    r"adhesiv|\boee\b|producci[oó]n|\bRB\d+\b", question, re.IGNORECASE):
+                second = "adhesiva" if data_agent == "ventas" else "ventas"
+                other = query_agent(question + " Responde solo con datos de tu ámbito; no infieras relaciones causales con el otro agente.",
+                                    display_question=question, agent=second)
+                if missing_report_evidence(other):
+                    raise ValueError("El segundo agente no devolvió datos suficientes para la presentación.")
+                evidence.append({"agent": second, "answer": other.get("answer", "")[:10000],
+                                 "tables": other.get("tables", [])[:5]})
+                steps.append({"name": "Aplicación Adhesiva" if second == "adhesiva" else "Ventas Oribay",
+                              "detail": "Consulté el segundo agente de datos", "status": "done"})
+            deck = create_presentation(current_owner(), question, evidence)
+            data["presentation"] = deck
+            data["answer"] = (f"Presentación editable creada en tu Google Drive: {deck['title']}. "
+                              f"Contiene {deck['slides']} diapositivas basadas en los datos consultados."
+                              + (f"\n\nLímite de interpretación: {deck['limitation']}" if deck["limitation"] else ""))
+            steps.append({"name": "Google Slides", "detail": "Presentación creada en tu Drive", "status": "done"})
         if route == "pdf" and re.search(r"[uú]ltima\s+consulta", question, re.IGNORECASE) and conversation_history:
             prior_answer = conversation_history[-1]["systemMessage"]["text"]["parts"][0]
             expected_refs = {code for code in re.findall(r"`([A-Za-z0-9.-]{4,})`", prior_answer)
@@ -1085,7 +1110,7 @@ def execute_plan(question: str, plan: dict, conversation_history=None) -> dict:
 def execute_and_store(question: str, plan: dict, conversation_history=None) -> dict:
     result = execute_plan(question, plan, conversation_history=conversation_history)
     route = result.get("route")
-    if route in ("ventas", "adhesiva", "pdf", "correo") and (result.get("answer") or result.get("charts") or result.get("tables")):
+    if route in ("ventas", "adhesiva", "pdf", "correo", "presentacion") and (result.get("answer") or result.get("charts") or result.get("tables")):
         saved_charts = result.get("charts", [])[:6]
         while saved_charts and len(json.dumps(saved_charts, ensure_ascii=False).encode("utf-8")) > 650_000:
             saved_charts.pop()
@@ -1093,6 +1118,10 @@ def execute_and_store(question: str, plan: dict, conversation_history=None) -> d
             "question": question[:2000], "answer": result.get("answer", "")[:12000],
             "charts": saved_charts, "tables": result.get("tables", [])[:6], "route": route,
             "data_agent": result.get("data_agent", "ventas")})
+    if route == "presentacion" and result.get("presentation"):
+        result["presentation"]["library_id"] = save_library_item(
+            "presentation", result["presentation"]["title"],
+            {"question": question[:2000], **result["presentation"]})
     if route == "correo" and result.get("email"):
         mail = result["email"]
         result["email"]["library_id"] = save_library_item("email", mail["subject"], {**mail, "status": "draft"})
