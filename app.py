@@ -176,6 +176,13 @@ def conversation_message(conversation_ref, kind, **values):
 def save_conversation_result(conversation_ref, question, result):
     answer = str(result.get("answer", ""))[:12000]
     plan = result.get("plan") or {}
+    source_question = str(plan.get("followup_source") or question)[:1200]
+    context = {"agent": str(result.get("data_agent", "ventas")),
+               "source_question": source_question,
+               "references": list(dict.fromkeys(re.findall(r"\b[A-Z]{1,5}[A-Z0-9.-]*\d[A-Z0-9.-]*\b", source_question, re.IGNORECASE)))[:20],
+               "years": list(dict.fromkeys(re.findall(r"\b20\d{2}\b", source_question)))[:8],
+               "top_n": int(re.search(r"\btop\s*(\d{1,2})\b", source_question, re.IGNORECASE).group(1))
+               if re.search(r"\btop\s*(\d{1,2})\b", source_question, re.IGNORECASE) else None}
     conversation_message(conversation_ref, "assistant", answer=answer,
                          route=str(result.get("route", "ventas")),
                          data_agent=str(result.get("data_agent", "ventas")),
@@ -183,6 +190,7 @@ def save_conversation_result(conversation_ref, question, result):
                          library_id=str(result.get("library_id", "")),
                          email_library_id=str((result.get("email") or {}).get("library_id", "")),
                          presentation=result.get("presentation") or {},
+                         context=context,
                          plan={key: plan.get(key) for key in (
                              "alert_metric", "alert_operator", "alert_threshold", "alert_period",
                              "alert_frequency", "alert_filters", "needs_clarification", "clarification",
@@ -213,7 +221,8 @@ def conversation_recent_agent_turns(conversation_ref, max_turns=5):
             answer = str(item.get("answer", "")).strip()[:2400]
             message_agent = item.get("data_agent") or ("adhesiva" if route == "adhesiva" else "ventas")
             if pending_question and route in ("ventas", "adhesiva", "pdf", "correo", "presentacion") and answer:
-                turns.append({"route": message_agent, "question": pending_question, "answer": answer})
+                turns.append({"route": message_agent, "question": pending_question, "answer": answer,
+                              "context": item.get("context") or {}})
             elif pending_question:
                 turns.append({"route": None})
             pending_question = ""
@@ -250,6 +259,9 @@ def followup_source(question, turns):
     if not needs_previous_turn(question):
         return None
     for turn in reversed(turns):
+        source_question = str((turn.get("context") or {}).get("source_question") or "").strip()
+        if source_question and not needs_previous_turn(source_question):
+            return {**turn, "question": source_question}
         prior = str(turn.get("question", "")).strip()
         if prior and not needs_previous_turn(prior) and not re.fullmatch(
                 r"(?:haz|crea|genera|muestra)\s+(?:un\s+)?(?:gr[aá]fico|presentaci[oó]n|pdf)(?:\s+visual)?",
@@ -951,11 +963,11 @@ def ask():
         if conversation.get("title") == "Nueva conversación":
             conversation_ref.update({"title": question[:72], "updated_at": datetime.now(timezone.utc).isoformat()})
     try:
-        history = conversation_recent_agent_turns(conversation_ref, max_turns=5) if conversation_ref and needs_previous_turn(question) else []
+        history = conversation_recent_agent_turns(conversation_ref, max_turns=5) if conversation_ref else []
         if history:
             history = [{**turn, "answer": focused_prior_answer(question, turn["answer"])} for turn in history]
         plan = decide(question, history)
-        source = followup_source(question, history)
+        source = followup_source(question, history) if needs_previous_turn(question) else None
         if source and source["route"] == plan.get("data_agent", "ventas"):
             original = source["question"]
             plan["data_question"] = (f"Resuelve la petición actual: {question}. Su referencia es esta consulta anterior: "

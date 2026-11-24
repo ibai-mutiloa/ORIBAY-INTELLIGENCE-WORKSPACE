@@ -16,6 +16,28 @@ EXPLICIT_ADHESIVE = re.compile(r"adhesiv|\b(?:oee|robot(?:es)?|m[aá]quina\s+rb\
 EXPLICIT_SALES = re.compile(r"\b(?:ventas?|facturaci[oó]n|clientes?|pedidos?|previsi[oó]n\s+de\s+ventas?)\b", re.IGNORECASE)
 
 
+def requested_intent(message: str) -> str | None:
+    """Identify explicit tool requests independently of the data-agent choice."""
+    lower = message.lower()
+    if re.search(r"presentaci[oó]n|diapositivas?|powerpoint|google slides|\bpptx?\b", lower):
+        return "presentacion"
+    if re.search(r"\b(?:drive|mi unidad|mis archivos|carpeta de google|path:)\b", lower):
+        return "drive"
+    if re.search(r"\b(?:cada\s+(?:d[ií]a|semana|mes)|cuando\s+(?:supere|baje|sea|llegue)|av[ií]same\s+(?:cuando|si)|notif[ií]came\s+cuando|vigila|monitoriza)\b", lower):
+        return "alerta"
+    if re.search(r"\b(?:env[ií]ame|m[aá]ndame|env[ií]a|manda)\b.{0,35}\b(?:mensaje|correo|email|gmail)\b|\b(?:mensaje|correo|email|gmail)\b.{0,35}\b(?:env[ií]ame|m[aá]ndame)\b", lower):
+        return "correo"
+    if re.search(r"\b(?:pdf|informe|documento)\b", lower):
+        return "pdf"
+    if re.search(r"\b(?:correo|email|gmail|redacta)\b", lower):
+        return "correo"
+    if re.search(r"\b(?:alerta|aviso)\b", lower):
+        return "alerta"
+    if re.search(r"\bgr[aá]fic[oa]\b", lower):
+        return "consulta"
+    return None
+
+
 def followup_agent(message: str, history: list | None) -> str | None:
     """A referential follow-up stays with its previous data agent unless it explicitly switches domain."""
     previous = next((item for item in reversed(history or []) if isinstance(item, dict)
@@ -76,21 +98,13 @@ No afirmes que hayas consultado datos ni ejecutado herramientas."""
 
 def _fallback(message: str, history: list | None = None) -> dict:
     lower = message.lower()
-    one_time_message = bool(re.search(r"\b(?:env[ií]ame|m[aá]ndame|env[ií]a|manda)\b.{0,35}\b(?:mensaje|correo|email|gmail)\b|\b(?:mensaje|correo|email|gmail)\b.{0,35}\b(?:env[ií]ame|m[aá]ndame)\b", lower))
-    recurring_alert = bool(re.search(r"\b(?:cada\s+(?:d[ií]a|semana|mes)|cuando\s+(?:supere|baje|sea|llegue)|av[ií]same\s+(?:cuando|si)|notif[ií]came\s+cuando|vigila|monitoriza)\b", lower))
-    drive_request = bool(re.search(r"\b(?:drive|mi unidad|mis archivos|carpeta de google|path:)\b", lower))
     data_agent = "adhesiva" if ADHESIVE_TERMS.search(lower) else "ventas"
     if data_agent == "ventas" and not re.search(r"ventas?|factur|clientes?|importes?|pedido", lower):
         previous = next((item for item in reversed(history or []) if isinstance(item, dict) and item.get("route") in ("ventas", "adhesiva")), None)
         if previous and previous.get("route") == "adhesiva":
             data_agent = "adhesiva"
-    route = ("presentacion" if re.search(r"presentaci[oó]n|diapositivas?|powerpoint|google slides|\bpptx?\b", lower) else
-             "drive" if drive_request else
-             "alerta" if recurring_alert else
-             "correo" if one_time_message else
-             "alerta" if re.search(r"\b(?:alerta|aviso)\b", lower) else
-             "pdf" if re.search(r"pdf|informe|documento", lower) else
-             "correo" if re.search(r"correo|email|gmail|redacta", lower) else data_agent)
+    intent = requested_intent(message)
+    route = data_agent if intent in (None, "consulta") else intent
     inherited = followup_agent(message, history)
     if inherited:
         data_agent = inherited
@@ -110,7 +124,7 @@ def _fallback(message: str, history: list | None = None) -> dict:
         drive_query = ""
     folder_match = re.search(r"\bcarpeta\s+(?:llamada\s+)?(.+?)(?:\s+en\s+(?:mi\s+)?drive|$)", message, re.IGNORECASE)
     drive_file = folder_match.group(1).strip()[:120] if drive_action == "create_folder" and folder_match else ""
-    return {"route": route, "data_agent": data_agent, "data_question": message, "title": "Solicitud Oribay",
+    return {"route": route, "intent": intent or "consulta", "data_agent": data_agent, "data_question": message, "title": "Solicitud Oribay",
             "recipient": "", "subject": "", "alert_metric": "", "alert_operator": "",
             "alert_threshold": None, "alert_period": "", "alert_frequency": "",
             "alert_filters": "", "needs_clarification": route == "alerta",
@@ -139,18 +153,18 @@ def decide(message: str, history: list | None = None) -> dict:
         result = json.loads(response.text)
         if result.get("route") not in ROUTES:
             raise ValueError("Ruta desconocida")
+        intent = requested_intent(message)
+        if intent == "consulta":
+            result["route"] = result.get("data_agent") if result.get("data_agent") in ("ventas", "adhesiva") else "ventas"
+        elif intent:
+            result["route"] = intent
         inherited = followup_agent(message, safe_history)
         if inherited:
             result["data_agent"] = inherited
             if result["route"] in ("ventas", "adhesiva"):
                 result["route"] = inherited
-        if re.search(r"\bgr[aá]fic[oa]\b", message, re.IGNORECASE) and not re.search(
-                r"\b(?:pdf|informe|documento|presentaci[oó]n|diapositivas?|powerpoint|slides)\b",
-                message, re.IGNORECASE):
-            result["route"] = "adhesiva" if ADHESIVE_TERMS.search(message) else (
-                safe_history[-1]["data_agent"] if safe_history else "ventas")
-        if re.search(r"presentaci[oó]n|diapositivas?|powerpoint|google slides|\bpptx?\b", message, re.IGNORECASE):
-            result["route"] = "presentacion"
+        if intent == "consulta" and safe_history and not (EXPLICIT_ADHESIVE.search(message) or EXPLICIT_SALES.search(message)):
+            result["route"] = safe_history[-1]["data_agent"]
         if result["route"] in ("ventas", "adhesiva"):
             result["data_agent"] = result["route"]
         elif result.get("data_agent") not in ("ventas", "adhesiva"):
@@ -159,6 +173,7 @@ def decide(message: str, history: list | None = None) -> dict:
             result["data_agent"] = "adhesiva"
         if inherited:
             result["data_agent"] = inherited
+        result["intent"] = intent or ("consulta" if result["route"] in ("ventas", "adhesiva") else result["route"])
         if result.get("route") == "drive" and result.get("drive_action") not in {"search", "read", "save_pdf", "create_folder", "rename", "move"}:
             result["drive_action"] = "search"
         if result.get("route") == "alerta" and result.get("context_used") and safe_history:

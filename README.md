@@ -30,6 +30,12 @@ Desplegado en Cloud Run. El servicio `oribay-intelligence-pilot` ejecuta la app 
 
 Chat paralelo con cuatro rutas visibles. El router Gemini decide entre consulta comercial, borrador de alerta, PDF y borrador de correo. La consulta comercial usa la API A2A del agente Ventas Oribay y renderiza los artefactos Vega-Lite; el SQL queda en un panel secundario.
 
+## Router y memoria (piloto)
+
+El router separa la intención de herramienta (`consulta`, `pdf`, `presentacion`, `correo`, `alerta`, `drive`) del agente de datos. El historial reciente del mismo agente se ofrece al router para decidir la ruta; solo las preguntas que hacen referencia a resultados anteriores envían contexto al agente de datos. Cada nueva respuesta guarda metadatos acotados de su consulta de origen (agente, años, referencias y límite de `top N`) en Firestore para resolver seguimientos posteriores. Un cambio explícito de dominio inicia un tramo nuevo de memoria. Las pruebas de regresión cubren el top 5, el gráfico, el PDF de OEE y el desglose comercial de zamak/acero inoxidable.
+
+Esta fase todavía usa los dos agentes configurados en código. El catálogo administrable, la selección por permisos antes del router y la evaluación con un conjunto amplio de conversaciones quedan para las siguientes fases.
+
 ## Estado
 
 - **Ventas:** consulta real al agente y gráfico renderizado en navegador.

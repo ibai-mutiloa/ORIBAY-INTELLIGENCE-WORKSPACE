@@ -1,8 +1,8 @@
 import unittest
 from unittest.mock import MagicMock, patch
 
-from app import exceeds_requested_top, focused_prior_answer, followup_source, missing_report_evidence, needs_previous_turn, reconcile_top_two_share
-from router import decide, followup_agent, _fallback
+from app import exceeds_requested_top, focused_prior_answer, followup_source, missing_report_evidence, needs_previous_turn, reconcile_top_two_share, save_conversation_result
+from router import decide, followup_agent, requested_intent, _fallback
 
 
 class ConversationContextTests(unittest.TestCase):
@@ -72,6 +72,25 @@ class ConversationContextTests(unittest.TestCase):
     def test_explicit_domain_switch_is_respected(self):
         history = [{"route": "ventas", "question": "Ventas de pieza 24", "answer": "datos"}]
         self.assertIsNone(followup_agent("Desglosa su OEE en la máquina RB4", history))
+
+    def test_intent_and_agent_are_separate(self):
+        history = [{"route": "adhesiva", "question": "OEE de RB4 semana 22", "answer": "54,51 %"}]
+        self.assertEqual(requested_intent("Haz un PDF sobre ese resultado"), "pdf")
+        self.assertEqual(_fallback("Haz un PDF sobre ese resultado", history)["data_agent"], "adhesiva")
+        self.assertEqual(requested_intent("Haz un gráfico visual"), "consulta")
+        self.assertEqual(_fallback("Haz un gráfico visual", history)["route"], "adhesiva")
+
+    def test_structured_context_preserves_original_scope_across_followups(self):
+        ref = MagicMock()
+        with patch("app.conversation_message") as write:
+            save_conversation_result(ref, "desglosa esas referencias", {
+                "route": "ventas", "data_agent": "ventas", "answer": "Referencias consultadas",
+                "plan": {"followup_source": "top 5 de ventas AC032 en 2026 frente a 2025"}})
+        context = write.call_args.kwargs["context"]
+        self.assertEqual(context["top_n"], 5)
+        self.assertEqual(context["years"], ["2026", "2025"])
+        turns = [{"route": "ventas", "question": "desglosa esas referencias", "answer": "datos", "context": context}]
+        self.assertEqual(followup_source("haz un gráfico visual", turns)["question"], context["source_question"])
 
     def test_missing_agent_data_cannot_become_a_pdf(self):
         self.assertTrue(missing_report_evidence({
