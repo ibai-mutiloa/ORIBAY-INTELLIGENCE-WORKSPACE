@@ -231,7 +231,7 @@ def conversation_recent_agent_turns(conversation_ref, max_turns=5):
 def needs_previous_turn(question):
     """Only references to earlier work should carry conversational data forward."""
     return bool(re.search(
-        r"\b(?:[eé]st[aeos]|aqu[eé]ll[ao]s?|anteriores?|[uú]ltim[ao]s?\s+consultas?|"
+        r"\b(?:[eé]st[aeos]|es[aeos]|aqu[eé]ll[ao]s?|anteriores?|[uú]ltim[ao]s?\s+consultas?|"
         r"lo\s+anterior|mismo\s+(?:cliente|periodo|an[aá]lisis)|"
         r"ahora|siguiendo|contin[uú]a|desglosa|ampl[ií]a|sobre\s+eso)\b",
         question, re.IGNORECASE))
@@ -251,6 +251,67 @@ def focused_prior_answer(question, answer):
         ranked.append((score, section))
     best_score, best_section = max(ranked, key=lambda item: item[0])
     return best_section.strip() if best_score else answer
+
+
+def missing_report_evidence(result):
+    """Do not turn an agent's request for missing identifiers into a downloadable PDF."""
+    if result.get("tables") or result.get("charts"):
+        return False
+    answer = str(result.get("answer", ""))
+    return bool(re.search(
+        r"no\s+se\s+dispone\s+de\s+(?:la\s+)?informaci[oó]n\s+necesaria|"
+        r"no\s+se\s+(?:ha\s+)?proporcionad[oa]\s+(?:un|la|el)|"
+        r"no\s+es\s+posible\s+proceder|"
+        r"por\s+favor,?\s+proporcion[ae]",
+        answer, re.IGNORECASE))
+
+
+def reconcile_top_two_share(answer, tables):
+    """Correct a two-client concentration claim only when all row amounts are available."""
+    claim = re.search(r"m[aá]s\s+del\s+\*\*(\d+(?:[.,]\d+)?)\s*%\*\*", str(answer), re.IGNORECASE)
+    if not claim or not re.search(r"dos\s+principales\s+clientes", answer, re.IGNORECASE):
+        return answer
+    for raw_table in tables or []:
+        rows = []
+        for line in str(raw_table).splitlines():
+            if "|" not in line:
+                continue
+            cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
+            if cells and not all(re.fullmatch(r":?-{2,}:?", cell.replace(" ", "")) for cell in cells):
+                rows.append(cells)
+        if len(rows) < 4:
+            continue
+        money_index = next((index for index, header in enumerate(rows[0])
+                            if re.search(r"factur|importe|eur|€", header, re.IGNORECASE)), None)
+        if money_index is None:
+            continue
+        amounts = []
+        for row in rows[1:]:
+            if money_index >= len(row):
+                amounts = []
+                break
+            raw = re.sub(r"[^\d,.-]", "", row[money_index])
+            if not raw:
+                amounts = []
+                break
+            if "," in raw and "." in raw:
+                raw = raw.replace(".", "").replace(",", ".") if raw.rfind(",") > raw.rfind(".") else raw.replace(",", "")
+            elif "," in raw:
+                raw = raw.replace(",", ".")
+            try:
+                amounts.append(float(raw))
+            except ValueError:
+                amounts = []
+                break
+        if len(amounts) < 3 or sum(amounts) <= 0:
+            continue
+        actual = 100 * sum(sorted(amounts, reverse=True)[:2]) / sum(amounts)
+        claimed_floor = float(claim.group(1).replace(",", "."))
+        if actual <= claimed_floor:
+            corrected = f"el **{actual:.2f}".replace(".", ",") + " %**"
+            return answer[:claim.start()] + corrected + answer[claim.end():]
+        return answer
+    return answer
 
 
 def conversation_sales_context(conversation_ref, agent="ventas", max_turns=1, question=""):
@@ -954,6 +1015,16 @@ def execute_plan(question: str, plan: dict, conversation_history=None) -> dict:
             return dict(route=route, plan=plan, steps=steps, drive=result,
                         answer="He preparado la acción en Drive. Elige el archivo y confirma cualquier cambio.")
         data_question = plan.get("data_question") or question
+        if data_agent == "adhesiva" and conversation_history:
+            prior_question = conversation_history[-2]["userMessage"]["text"]
+            prior_answer = conversation_history[-1]["systemMessage"]["text"]["parts"][0]
+            prior_context = prior_question + " " + prior_answer
+            machine = re.search(r"\b(?:m[aá]quina\s+)?(RB\d+)\b", prior_context, re.IGNORECASE)
+            week = re.search(r"\bsemana\s+(\d{1,2})\s+de\s+(20\d{2})\b", prior_context, re.IGNORECASE)
+            if machine and week:
+                data_question += (f" La consulta anterior identificó la máquina {machine.group(1).upper()} "
+                                  f"y la semana {week.group(1)} de {week.group(2)}. "
+                                  "La expresión «ese resultado» se refiere a esa máquina y semana.")
         if data_agent == "adhesiva":
             data_question += (" Responde exactamente al nivel solicitado (máquina, semana o artículo). "
                               "Si se pide un OEE global de una máquina y periodo, usa la definición agregada del glosario; "
@@ -974,6 +1045,11 @@ def execute_plan(question: str, plan: dict, conversation_history=None) -> dict:
                                   "para identificar referencias o filtros mencionados; excluye del informe "
                                   "cualquier cliente, planta o análisis anterior ajeno al alcance pedido.")
         data = query_agent(data_question, display_question=question, conversation_history=conversation_history, agent=data_agent)
+        if route == "ventas":
+            data["answer"] = reconcile_top_two_share(data.get("answer", ""), data.get("tables", []))
+        if route == "pdf" and missing_report_evidence(data):
+            raise ValueError("El agente no ha devuelto datos suficientes para crear el PDF. "
+                             "No se ha preparado ningún documento; indica la máquina y el periodo o vuelve a consultar.")
         if route == "pdf" and re.search(r"[uú]ltima\s+consulta", question, re.IGNORECASE) and conversation_history:
             prior_answer = conversation_history[-1]["systemMessage"]["text"]["parts"][0]
             expected_refs = {code for code in re.findall(r"`([A-Za-z0-9.-]{4,})`", prior_answer)

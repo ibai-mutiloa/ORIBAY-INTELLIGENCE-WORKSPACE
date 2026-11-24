@@ -134,8 +134,16 @@
         let value = row[index] || '';
         if (/^-?\d+(?:\.\d+)?$/.test(value) && !/^\d{4}-\d{2}(?:-\d{2})?$/.test(value)) {
           const number = Number(value);
-          value = new Intl.NumberFormat('es-ES', { maximumFractionDigits: Number.isInteger(number) ? 0 : 2 }).format(number);
-          if (/eur|importe|facturacion|total/i.test(normalized[index])) value += ' €';
+          const header = normalized[index];
+          const isCount = /unidad|pieza|buena|producida|reoperar|horas?|totalperiodo/i.test(header)
+            && !/eur|importe|facturaci[oó]n|precio|tarifa|coste|margen|€/.test(header);
+          const isMoney = !isCount && /eur|importe|facturaci[oó]n|precio|tarifa|coste|margen|€/.test(header);
+          value = new Intl.NumberFormat('es-ES', {
+            minimumFractionDigits: isMoney ? 2 : 0,
+            maximumFractionDigits: isMoney ? 2 : Number.isInteger(number) ? 0 : 2,
+          }).format(number);
+          if (isMoney) value += ' €';
+          else if (/^pct|porcentaje|%/.test(header)) value += ' %';
         }
         td.textContent = value;
         tr.append(td);
