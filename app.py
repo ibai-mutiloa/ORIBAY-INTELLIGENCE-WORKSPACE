@@ -1056,6 +1056,8 @@ def execute_plan(question: str, plan: dict, conversation_history=None) -> dict:
             raise ValueError("El agente no ha devuelto datos suficientes para crear el documento. "
                              "Indica el alcance y periodo o vuelve a consultar.")
         if route == "presentacion":
+            steps.append({"name": "Aplicación Adhesiva" if data_agent == "adhesiva" else "Ventas Oribay",
+                          "detail": "Consulté el agente de datos y recibí sus resultados", "status": "done"})
             evidence = [{"agent": data_agent, "answer": data.get("answer", "")[:10000],
                          "tables": data.get("tables", [])[:5]}]
             if re.search(r"factur|ventas?|clientes?|pedido", question, re.IGNORECASE) and re.search(
@@ -1094,7 +1096,8 @@ def execute_plan(question: str, plan: dict, conversation_history=None) -> dict:
                 if missing:
                     raise ValueError("No pude verificar todas las referencias de la última consulta "
                                      "para el PDF. No generaré un informe incompleto; reformula el alcance.")
-        steps.append({"name": "Aplicación Adhesiva" if data_agent == "adhesiva" else "Ventas Oribay", "detail": "Consulté el agente de datos y recibí sus resultados", "status": "done"})
+        if route != "presentacion":
+            steps.append({"name": "Aplicación Adhesiva" if data_agent == "adhesiva" else "Ventas Oribay", "detail": "Consulté el agente de datos y recibí sus resultados", "status": "done"})
         if route == "pdf":
             data["source_answer"] = data.get("answer", "")
             data["answer"] = draft_pdf_analysis(question, data.get("answer", ""), data.get("tables", []), data_agent=data_agent)

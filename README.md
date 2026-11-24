@@ -4,7 +4,7 @@
 
 La ruta `presentacion` consulta Ventas Oribay o Aplicación Adhesiva con la identidad del usuario. Si la petición menciona expresamente ambos ámbitos, consulta los dos agentes por separado y no crea el archivo si falta evidencia de uno de ellos. Gemini redacta tres secciones con los resultados recibidos y Google Slides crea una presentación editable de seis diapositivas en el Drive personal del usuario. El archivo se basa en la plantilla privada `gs://aad-analitica-oee-oribay-library/templates/oribay-presentation-20261124.pptx`, proporcionada por Oribay, y el enlace queda en la conversación y en Tu espacio. Google Slides API debe estar habilitada en `aad-analitica-oee`; la autorización de Drive existente sirve para crear el documento.
 
-Esta primera versión genera texto y cifras; todavía no inserta gráficos ni tablas visuales, y requiere revisión humana antes de compartir. La conversión de la plantilla y el diseño final deben comprobarse con una cuenta de usuario conectada. No se ha desplegado ni probado en Cloud Run en esta fase.
+Esta primera versión genera texto y cifras; todavía no inserta gráficos ni tablas visuales, y requiere revisión humana antes de compartir. El 24/11/2026 se probó en una revisión de Cloud Run con 0 % del tráfico: el usuario conectado creó y abrió una presentación privada de seis diapositivas. La revisión visual detectó una inferencia no justificada sobre el mix de producto; se añadió una comprobación para bloquear ese contenido cuando solo hay agregados mensuales. La corrección sigue pendiente de una nueva prueba completa antes de promoverla a producción.
 
 ## Apariencia corporativa
 

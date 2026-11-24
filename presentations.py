@@ -2,6 +2,7 @@
 import io
 import json
 import os
+import re
 
 from google.genai import Client, types
 from google.cloud import storage
@@ -32,7 +33,10 @@ def _outline(question, evidence):
                 "Devuelve SOLO JSON: title, subtitle, sections (exactamente 3 objetos con "
                 "title, summary y points: exactamente 3 objetos con title y body), "
                 "conclusion y limitation. Usa únicamente cifras y hechos presentes en "
-                "verified_data; no inventes causalidad. Si dos agentes hablan de temas "
+                "verified_data; no inventes causalidad. Los totales mensuales NO permiten "
+                "atribuir cambios al mix de producto, tipo de cambio, clientes o producción: "
+                "describe solo la variación observada salvo que haya desglose verificable. "
+                "Si dos agentes hablan de temas "
                 "diferentes, separa sus hallazgos. Las cifras deben conservar valor y "
                 "unidad, con formato español. Títulos de 70 caracteres, resúmenes de "
                 "220 y cuerpos de puntos de 120. Las limitaciones de los datos deben "
@@ -45,6 +49,10 @@ def _outline(question, evidence):
             not isinstance(s, dict) or not isinstance(s.get("points"), list)
             or len(s["points"]) != 3 for s in sections):
         raise ValueError("No se pudo estructurar la presentación con los datos recibidos.")
+    detailed_tables = " ".join(" ".join(item.get("tables", []) or []) for item in evidence)
+    has_product_breakdown = bool(re.search(r"\b(?:referencia|familia|producto)\b", detailed_tables, re.IGNORECASE))
+    if not has_product_breakdown and re.search(r"\bmix\b|referencias de menor valor", json.dumps(result, ensure_ascii=False), re.IGNORECASE):
+        raise ValueError("El borrador atribuye la variación al mix de producto sin un desglose que lo demuestre. No se creó la presentación.")
     return result
 
 

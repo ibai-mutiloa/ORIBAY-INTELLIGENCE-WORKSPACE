@@ -61,6 +61,17 @@
         workspaceInput.focus();
       });
     });
+    if (accessibleAgents.length) {
+      const button = make('button', '', '▣  Crear presentación');
+      button.type = 'button';
+      button.addEventListener('click', () => {
+        workspaceInput.value = accessibleAgents.includes('ventas')
+          ? 'Prepara una presentación para dirección con los datos de ventas de los últimos tres meses completos'
+          : 'Prepara una presentación para dirección sobre el OEE de la máquina RB4 en la última semana completa';
+        workspaceInput.focus();
+      });
+      intro.querySelector('.prompts')?.append(button);
+    }
     intro.querySelector('.prompts')?.removeAttribute('hidden');
     if (!accessibleAgents.length) {
       intro.querySelector('.prompts')?.append(make('p', 'notice', 'Conecta Google para ver las consultas disponibles para tu cuenta.'));
