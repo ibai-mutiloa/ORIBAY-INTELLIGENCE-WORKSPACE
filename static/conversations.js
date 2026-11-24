@@ -9,7 +9,6 @@
   const backdrop = document.querySelector('#sidebar-backdrop');
   let activeId = null;
   let activeTitle = '';
-  let salesHistory = [];
   let accessibleAgents = [];
   const chartLocale = { decimal: ',', thousands: '.', grouping: [3], currency: ['', ' €'] };
 
@@ -218,7 +217,6 @@
     void summarizeOnLeave();
     activeId = null;
     activeTitle = '';
-    salesHistory = [];
     titleElement.textContent = 'Nuevo chat';
     workspaceChat.hidden = false;
     libraryView.hidden = true;
@@ -256,6 +254,11 @@
       });
     }
     for (const table of message.tables || []) appendTable(card, table);
+    if (message.sql?.length) {
+      const details = make('details');
+      details.append(make('summary', '', 'Ver consultas SQL'), make('pre', '', message.sql.join('\n\n')));
+      card.append(details);
+    }
     if (message.email_snapshot?.body) {
       const mail = message.email_snapshot;
       card.append(make('pre', 'email', `Para: ${mail.to || '(destinatario)'}\nAsunto: ${mail.subject || ''}\n\n${mail.body}`));
@@ -327,7 +330,6 @@
       activeId = data.id;
       activeTitle = data.title || 'Nuevo chat';
       titleElement.textContent = activeTitle;
-      salesHistory = [];
       workspaceChat.replaceChildren();
       let previousQuestion = '';
       for (const message of data.messages || []) {
@@ -336,9 +338,6 @@
           workspaceChat.append(make('div', 'msg user', previousQuestion));
         } else {
           workspaceChat.append(makeAssistantCard(message));
-          if ([...accessibleAgents, 'pdf', 'correo', 'presentacion'].includes(message.route) && previousQuestion) {
-            salesHistory.push({ route: message.data_agent || (message.route === 'adhesiva' ? 'adhesiva' : 'ventas'), question: previousQuestion, answer: message.answer || '' });
-          }
           previousQuestion = '';
         }
       }
@@ -376,7 +375,7 @@
         titleElement.textContent = activeTitle;
       }
       await refreshHistory();
-      const data = await sendJson('/api/ask', { question, conversation_id: activeId, history: salesHistory.slice(-5) });
+      const data = await sendJson('/api/ask', { question, conversation_id: activeId });
       run.replaceChildren();
       const stepIcons = { Router: '✦', Regla: '◷', 'Ventas Oribay': '▥', 'Aplicación Adhesiva': '▥', PDF: '▤', 'Google Slides': serviceIcon('drive'), Gmail: serviceIcon('gmail'), Drive: serviceIcon('drive') };
       const completedSteps = data.steps?.length ? data.steps : [{ name: 'Router', detail: `Ruta elegida: ${data.route}`, status: 'done' }];
@@ -414,7 +413,6 @@
         details.append(make('summary', '', 'Ver consultas SQL'), make('pre', '', data.sql.join('\n\n')));
         card.append(details);
       }
-      if ([...accessibleAgents, 'pdf', 'correo', 'presentacion'].includes(data.route)) salesHistory.push({ route: data.data_agent || 'ventas', question, answer: data.answer || '' });
       await refreshHistory();
     } catch (error) {
       setStage(router, 'error', 'No se pudo completar la solicitud');

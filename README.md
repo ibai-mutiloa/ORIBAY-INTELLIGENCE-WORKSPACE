@@ -34,6 +34,8 @@ Chat paralelo con cuatro rutas visibles. El router Gemini decide entre consulta 
 
 El router separa la intención de herramienta (`consulta`, `pdf`, `presentacion`, `correo`, `alerta`, `drive`) del agente de datos. El historial reciente del mismo agente se ofrece al router para decidir la ruta; solo las preguntas que hacen referencia a resultados anteriores envían contexto al agente de datos. Cada nueva respuesta guarda metadatos acotados de su consulta de origen (agente, años, referencias y límite de `top N`) en Firestore para resolver seguimientos posteriores. Un cambio explícito de dominio inicia un tramo nuevo de memoria. Las pruebas de regresión cubren el top 5, el gráfico, el PDF de OEE y el desglose comercial de zamak/acero inoxidable.
 
+Los mensajes guardan también las tablas, gráficos y consultas SQL para recuperarlos al abrir de nuevo el chat. La memoria del agente usa la respuesta analítica original y extractos de tablas, incluso cuando el resultado visible es un PDF o una presentación. Los ajustes explícitos de alcance, como «solo en España», se mantienen en las siguientes preguntas del mismo agente. Los artefactos se limitan a 500 KB por mensaje; los gráficos más grandes pueden omitirse del historial. La memoria se restringe al tramo consecutivo del mismo agente y no pasa de Ventas a Producción ni viceversa.
+
 La evaluación con un conjunto amplio de conversaciones y los criterios de incorporación de nuevos agentes quedan para la siguiente fase.
 
 ## Catálogo y autorización de agentes (piloto)

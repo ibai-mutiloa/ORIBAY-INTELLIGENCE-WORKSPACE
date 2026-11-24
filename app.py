@@ -183,16 +183,42 @@ def conversation_message(conversation_ref, kind, **values):
     })
 
 
+def bounded_conversation_artifacts(result):
+    """Persist useful visuals and SQL without exceeding a Firestore message document."""
+    charts = [item for item in (result.get("charts") or [])[:6] if isinstance(item, dict)]
+    tables = [str(item)[:40_000] for item in (result.get("tables") or [])[:6]]
+    sql = [str(item)[:12_000] for item in (result.get("sql") or [])[:8]]
+    while len(json.dumps({"charts": charts, "tables": tables, "sql": sql}, ensure_ascii=False).encode("utf-8")) > 500_000:
+        if charts:
+            charts.pop()
+        elif tables:
+            tables.pop()
+        elif sql:
+            sql.pop()
+        else:
+            break
+    return charts, tables, sql
+
+
+def memory_evidence(result):
+    """Keep agent facts and a bounded table excerpt, not a generated PDF or slide caption."""
+    answer = str(result.get("source_answer") or result.get("answer") or "")[:3000]
+    tables = [str(table)[:3500] for table in (result.get("tables") or [])[:2]]
+    return (answer + ("\n\nTablas verificadas:\n" + "\n\n".join(tables) if tables else ""))[:8500]
+
+
 def save_conversation_result(conversation_ref, question, result):
     answer = str(result.get("answer", ""))[:12000]
     plan = result.get("plan") or {}
     source_question = str(plan.get("followup_source") or question)[:1200]
     context = {"agent": str(result.get("data_agent", "ventas")),
                "source_question": source_question,
+               "anchored": bool(plan.get("followup_source")) or not needs_previous_turn(question),
                "references": list(dict.fromkeys(re.findall(r"\b[A-Z]{1,5}[A-Z0-9.-]*\d[A-Z0-9.-]*\b", source_question, re.IGNORECASE)))[:20],
                "years": list(dict.fromkeys(re.findall(r"\b20\d{2}\b", source_question)))[:8],
                "top_n": int(re.search(r"\btop\s*(\d{1,2})\b", source_question, re.IGNORECASE).group(1))
                if re.search(r"\btop\s*(\d{1,2})\b", source_question, re.IGNORECASE) else None}
+    charts, tables, sql = bounded_conversation_artifacts(result)
     conversation_message(conversation_ref, "assistant", answer=answer,
                          route=str(result.get("route", "ventas")),
                          data_agent=str(result.get("data_agent", "ventas")),
@@ -200,6 +226,8 @@ def save_conversation_result(conversation_ref, question, result):
                          library_id=str(result.get("library_id", "")),
                          email_library_id=str((result.get("email") or {}).get("library_id", "")),
                          presentation=result.get("presentation") or {},
+                         charts=charts, tables=tables, sql=sql,
+                         memory_evidence=memory_evidence(result),
                          context=context,
                          plan={key: plan.get(key) for key in (
                              "alert_metric", "alert_operator", "alert_threshold", "alert_period",
@@ -228,7 +256,7 @@ def conversation_recent_agent_turns(conversation_ref, max_turns=5):
             pending_question = str(item.get("question", "")).strip()[:1200]
         elif item.get("kind") == "assistant":
             route = item.get("route")
-            answer = str(item.get("answer", "")).strip()[:2400]
+            answer = str(item.get("memory_evidence") or memory_evidence(item)).strip()[:8500]
             message_agent = item.get("data_agent") or ("adhesiva" if route == "adhesiva" else "ventas")
             if pending_question and route in (set(CATALOG) | {"pdf", "correo", "presentacion"}) and answer:
                 turns.append({"route": message_agent, "question": pending_question, "answer": answer,
@@ -253,6 +281,8 @@ def needs_previous_turn(question):
     """Only references to earlier work should carry conversational data forward."""
     if FOLLOWUP_TERMS.search(question):
         return True
+    if re.match(r"\s*(?:solo|[uú]nicamente|filtra|limita|quita|excluye|incluye|y\s+en)\b", question, re.IGNORECASE):
+        return True
     if re.fullmatch(r"\s*(?:haz|crea|genera|muestra)\s+(?:un\s+)?gr[aá]fic[oa](?:\s+visual)?\s*", question, re.IGNORECASE):
         return True
     return bool(re.search(
@@ -269,8 +299,9 @@ def followup_source(question, turns):
     if not needs_previous_turn(question):
         return None
     for turn in reversed(turns):
-        source_question = str((turn.get("context") or {}).get("source_question") or "").strip()
-        if source_question and not needs_previous_turn(source_question):
+        context = turn.get("context") or {}
+        source_question = str(context.get("source_question") or "").strip()
+        if source_question and (context.get("anchored") or not needs_previous_turn(source_question)):
             return {**turn, "question": source_question}
         prior = str(turn.get("question", "")).strip()
         if prior and not needs_previous_turn(prior) and not re.fullmatch(
@@ -278,6 +309,14 @@ def followup_source(question, turns):
                 prior, re.IGNORECASE):
             return turn
     return None
+
+
+def updated_scope(source_question, followup_question):
+    """Carry explicit refinements forward while leaving presentation actions out of scope."""
+    if re.match(r"\s*(?:solo|[uú]nicamente|filtra|limita|quita|excluye|incluye|y\s+en)\b",
+                followup_question, re.IGNORECASE):
+        return (source_question + "; ajuste posterior: " + followup_question)[:1200]
+    return source_question[:1200]
 
 
 def exceeds_requested_top(source_question, tables):
@@ -934,6 +973,7 @@ def conversation_get(conversation_id):
                          "presentation": message.get("presentation", {}),
                          "document_library_id": message.get("document_library_id", ""),
                          "charts": message.get("charts", []), "tables": message.get("tables", []),
+                         "sql": message.get("sql", []),
                          "plan": message.get("plan", {})})
     return jsonify(id=conversation_id, title=conversation.get("summary") or conversation.get("title", "Chat de ventas"), messages=messages)
 
@@ -997,7 +1037,7 @@ def ask():
                                      "salvo que la petición actual los cambie explícitamente. Si pide un gráfico, "
                                      "devuelve un gráfico de esos mismos resultados y su tabla de respaldo. "
                                      "No cambies un top 5 por un top 10.")[:2000]
-            plan["followup_source"] = original[:1200]
+            plan["followup_source"] = updated_scope(original, question)
             conversation_history = [
                 {"userMessage": {"text": original}},
                 {"systemMessage": {"text": {"parts": [source["answer"]]}}},
@@ -1159,6 +1199,7 @@ def execute_plan(question: str, plan: dict, conversation_history=None) -> dict:
             raise ValueError("El agente no ha devuelto datos suficientes para crear el documento. "
                              "Indica el alcance y periodo o vuelve a consultar.")
         if route == "presentacion":
+            data["source_answer"] = data.get("answer", "")
             steps.append({"name": CATALOG[data_agent]["name"],
                           "detail": "Consulté el agente de datos y recibí sus resultados", "status": "done"})
             evidence = [{"agent": data_agent, "answer": data.get("answer", "")[:10000],

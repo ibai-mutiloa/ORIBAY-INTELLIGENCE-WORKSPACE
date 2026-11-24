@@ -1,7 +1,9 @@
 import unittest
 from unittest.mock import MagicMock, patch
 
-from app import exceeds_requested_top, focused_prior_answer, followup_source, missing_report_evidence, needs_previous_turn, reconcile_top_two_share, save_conversation_result
+from app import (app, bounded_conversation_artifacts, conversation_recent_agent_turns, exceeds_requested_top,
+                 focused_prior_answer, followup_source, memory_evidence, missing_report_evidence,
+                 needs_previous_turn, reconcile_top_two_share, save_conversation_result, updated_scope)
 from router import decide, followup_agent, requested_intent, _fallback
 
 
@@ -98,6 +100,70 @@ class ConversationContextTests(unittest.TestCase):
         self.assertEqual(context["years"], ["2026", "2025"])
         turns = [{"route": "ventas", "question": "desglosa esas referencias", "answer": "datos", "context": context}]
         self.assertEqual(followup_source("haz un gráfico visual", turns)["question"], context["source_question"])
+
+    def test_refinement_survives_another_followup(self):
+        source = "Top 5 de piezas vendidas en 2026"
+        refinement = "solo en España"
+        self.assertTrue(needs_previous_turn(refinement))
+        scope = updated_scope(source, refinement)
+        self.assertIn("España", scope)
+        turn = {"route": "ventas", "question": refinement, "answer": "Cinco piezas españolas",
+                "context": {"source_question": scope, "anchored": True}}
+        self.assertEqual(followup_source("haz un gráfico visual", [turn])["question"], scope)
+        self.assertEqual(updated_scope(scope, "haz un gráfico visual"), scope)
+
+    def test_memory_keeps_source_facts_and_tables_not_document_copy(self):
+        result = {"answer": "PDF redactado", "source_answer": "Ventas verificadas",
+                  "tables": ["| Pieza | Importe |\n| --- | --- |\n| AC032 | 100 € |"]}
+        evidence = memory_evidence(result)
+        self.assertIn("AC032", evidence)
+        self.assertIn("Ventas verificadas", evidence)
+        self.assertNotIn("PDF redactado", evidence)
+
+    def test_conversation_message_persists_bounded_visuals_and_sql(self):
+        ref = MagicMock()
+        result = {"route": "ventas", "data_agent": "ventas", "answer": "Resultado",
+                  "charts": [{"image": "x" * 600_000}, {"title": "Gráfico pequeño"}],
+                  "tables": ["| Pieza | Importe |\n| --- | --- |\n| AC032 | 100 € |"],
+                  "sql": ["SELECT 1"], "plan": {}}
+        with patch("app.conversation_message") as write:
+            save_conversation_result(ref, "Ventas de AC032", result)
+        saved = write.call_args.kwargs
+        self.assertEqual(saved["charts"], [])
+        self.assertEqual(saved["tables"], result["tables"])
+        self.assertEqual(saved["sql"], result["sql"])
+        self.assertIn("AC032", saved["memory_evidence"])
+
+    def test_memory_recovered_from_old_table_and_isolated_by_agent(self):
+        items = [
+            {"kind": "user", "question": "Top 5 de ventas"},
+            {"kind": "assistant", "route": "ventas", "data_agent": "ventas", "answer": "Top 5",
+             "tables": ["| Pieza | Importe |\n| --- | --- |\n| AC032 | 100 € |"]},
+            {"kind": "user", "question": "OEE de RB4"},
+            {"kind": "assistant", "route": "adhesiva", "data_agent": "adhesiva", "answer": "54,51 %"},
+        ]
+        ref = MagicMock()
+        ref.collection.return_value.order_by.return_value.limit.return_value.stream.return_value = [
+            type("Snapshot", (), {"to_dict": lambda self, item=item: item})() for item in reversed(items)]
+        turns = conversation_recent_agent_turns(ref)
+        self.assertEqual(len(turns), 1)
+        self.assertEqual(turns[0]["route"], "adhesiva")
+        self.assertNotIn("AC032", turns[0]["answer"])
+
+    def test_reopened_conversation_returns_saved_artifacts(self):
+        message = {"kind": "assistant", "route": "ventas", "answer": "Ventas verificadas",
+                   "charts": [{"title": "Ventas"}], "tables": ["| Mes | Importe |"],
+                   "sql": ["SELECT 1"]}
+        ref = MagicMock()
+        ref.collection.return_value.order_by.return_value.stream.return_value = [
+            type("Snapshot", (), {"to_dict": lambda self: message})()]
+        with patch("app.owned_conversation", return_value=(ref, {"title": "Ventas"})):
+            response = app.test_client().get("/api/conversations/test-id")
+        self.assertEqual(response.status_code, 200)
+        restored = response.get_json()["messages"][0]
+        self.assertEqual(restored["charts"], message["charts"])
+        self.assertEqual(restored["tables"], message["tables"])
+        self.assertEqual(restored["sql"], message["sql"])
 
     def test_missing_agent_data_cannot_become_a_pdf(self):
         self.assertTrue(missing_report_evidence({
