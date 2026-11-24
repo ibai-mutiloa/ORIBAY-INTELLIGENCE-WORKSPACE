@@ -9,6 +9,25 @@ from google.oauth2.credentials import Credentials
 
 ROUTES = {"ventas", "adhesiva", "alerta", "pdf", "correo", "drive", "presentacion"}
 ADHESIVE_TERMS = re.compile(r"adhesiv|\b(?:oee|robot(?:es)?|m[aá]quinas?|rb\d+|balanceo|balanceios|producci[oó]n|rendimiento|paradas|te[oó]ricos?|turnos?|calidad)\b", re.IGNORECASE)
+FOLLOWUP_TERMS = re.compile(r"\b(?:que\s+(?:has|hab[ií]as|hemos)\s+(?:considerado|usado|visto|analizado)|"
+                            r"(?:referencias?|piezas?|datos|resultados?)\s+(?:que\s+)?(?:has|hemos)\s+(?:considerado|visto|usado)|"
+                            r"(?:puedes?\s+)?desglos[ae]r?|sobre\s+(?:eso|esto)|lo\s+anterior)\b", re.IGNORECASE)
+EXPLICIT_ADHESIVE = re.compile(r"adhesiv|\b(?:oee|robot(?:es)?|m[aá]quina\s+rb\d+|rb\d+|producci[oó]n|planta|paradas)\b", re.IGNORECASE)
+EXPLICIT_SALES = re.compile(r"\b(?:ventas?|facturaci[oó]n|clientes?|pedidos?|previsi[oó]n\s+de\s+ventas?)\b", re.IGNORECASE)
+
+
+def followup_agent(message: str, history: list | None) -> str | None:
+    """A referential follow-up stays with its previous data agent unless it explicitly switches domain."""
+    previous = next((item for item in reversed(history or []) if isinstance(item, dict)
+                     and (item.get("route") or item.get("data_agent")) in ("ventas", "adhesiva")), None)
+    if not previous or not FOLLOWUP_TERMS.search(message):
+        return None
+    prior_agent = previous.get("route") or previous.get("data_agent")
+    if prior_agent == "ventas" and EXPLICIT_ADHESIVE.search(message):
+        return None
+    if prior_agent == "adhesiva" and EXPLICIT_SALES.search(message):
+        return None
+    return prior_agent
 SYSTEM = """Eres el router de Oribay. Devuelve SOLO JSON con:
 route (ventas|adhesiva|alerta|pdf|correo|drive|presentacion), data_agent (ventas|adhesiva), data_question, title, recipient, subject,
 drive_action (search|read|save_pdf|create_folder|rename|move), drive_query,
@@ -72,6 +91,11 @@ def _fallback(message: str, history: list | None = None) -> dict:
              "alerta" if re.search(r"\b(?:alerta|aviso)\b", lower) else
              "pdf" if re.search(r"pdf|informe|documento", lower) else
              "correo" if re.search(r"correo|email|gmail|redacta", lower) else data_agent)
+    inherited = followup_agent(message, history)
+    if inherited:
+        data_agent = inherited
+        if route in ("ventas", "adhesiva"):
+            route = inherited
     drive_action = ("save_pdf" if re.search(r"\b(?:guarda|guardar|sube|subir)\b.*\b(?:pdf|informe)\b", lower) else
                     "create_folder" if re.search(r"\b(?:crea|crear|nueva)\b.*\bcarpeta\b", lower) else
                     "rename" if re.search(r"\b(?:renombra|renombrar|cambia el nombre)\b", lower) else
@@ -115,6 +139,11 @@ def decide(message: str, history: list | None = None) -> dict:
         result = json.loads(response.text)
         if result.get("route") not in ROUTES:
             raise ValueError("Ruta desconocida")
+        inherited = followup_agent(message, safe_history)
+        if inherited:
+            result["data_agent"] = inherited
+            if result["route"] in ("ventas", "adhesiva"):
+                result["route"] = inherited
         if re.search(r"\bgr[aá]fic[oa]\b", message, re.IGNORECASE) and not re.search(
                 r"\b(?:pdf|informe|documento|presentaci[oó]n|diapositivas?|powerpoint|slides)\b",
                 message, re.IGNORECASE):
@@ -128,6 +157,8 @@ def decide(message: str, history: list | None = None) -> dict:
             result["data_agent"] = "adhesiva" if ADHESIVE_TERMS.search(message) else "ventas"
         if result["route"] in ("pdf", "correo", "alerta", "presentacion") and ADHESIVE_TERMS.search(message) and not re.search(r"factur|ventas?|clientes?|pedido", message, re.IGNORECASE):
             result["data_agent"] = "adhesiva"
+        if inherited:
+            result["data_agent"] = inherited
         if result.get("route") == "drive" and result.get("drive_action") not in {"search", "read", "save_pdf", "create_folder", "rename", "move"}:
             result["drive_action"] = "search"
         if result.get("route") == "alerta" and result.get("context_used") and safe_history:

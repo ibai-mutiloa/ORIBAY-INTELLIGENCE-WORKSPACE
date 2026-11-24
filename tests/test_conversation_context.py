@@ -2,7 +2,7 @@ import unittest
 from unittest.mock import MagicMock, patch
 
 from app import exceeds_requested_top, focused_prior_answer, followup_source, missing_report_evidence, needs_previous_turn, reconcile_top_two_share
-from router import decide
+from router import decide, followup_agent, _fallback
 
 
 class ConversationContextTests(unittest.TestCase):
@@ -53,6 +53,25 @@ class ConversationContextTests(unittest.TestCase):
         self.assertEqual(plan["route"], "ventas")
         self.assertTrue(needs_previous_turn("haz un gráfico visual"))
         self.assertTrue(needs_previous_turn("haz un grafico visual"))
+
+    def test_material_reference_followup_stays_in_sales(self):
+        first = {"route": "ventas", "question": "Qué preveemos vender de la pieza 24 en acero inoxidable y zamak",
+                 "answer": "Zamak y acero inoxidable por año"}
+        request = "puedes desglosar las referencias que has considerado en zamak y en acero inoxidable?"
+        self.assertTrue(needs_previous_turn(request))
+        self.assertEqual(followup_source(request, [first])["question"], first["question"])
+        self.assertEqual(followup_agent(request, [first]), "ventas")
+        self.assertEqual(_fallback(request, [first])["route"], "ventas")
+        client = MagicMock()
+        client.models.generate_content.return_value.text = (
+            '{"route":"adhesiva","data_agent":"adhesiva","data_question":"referencias de materiales"}')
+        with patch("router.Client", return_value=client):
+            plan = decide(request, [first])
+        self.assertEqual((plan["route"], plan["data_agent"]), ("ventas", "ventas"))
+
+    def test_explicit_domain_switch_is_respected(self):
+        history = [{"route": "ventas", "question": "Ventas de pieza 24", "answer": "datos"}]
+        self.assertIsNone(followup_agent("Desglosa su OEE en la máquina RB4", history))
 
     def test_missing_agent_data_cannot_become_a_pdf(self):
         self.assertTrue(missing_report_evidence({

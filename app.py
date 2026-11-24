@@ -29,7 +29,7 @@ from reportlab.lib.enums import TA_CENTER
 from reportlab.lib.units import mm
 from email.message import EmailMessage
 from googleapiclient.discovery import build
-from router import decide, draft_business_email, draft_pdf_analysis, answer_from_drive, summarize_conversation
+from router import decide, draft_business_email, draft_pdf_analysis, answer_from_drive, summarize_conversation, FOLLOWUP_TERMS
 from user_data_auth import (UserBigQueryAuthError, begin_oauth, disconnect_oauth,
                             finish_oauth, is_connected, query_data_agent_as_user, list_data_agents_as_user, _redirect_uri)
 from user_data_auth import drive_is_connected
@@ -232,6 +232,8 @@ def conversation_recent_agent_turns(conversation_ref, max_turns=5):
 
 def needs_previous_turn(question):
     """Only references to earlier work should carry conversational data forward."""
+    if FOLLOWUP_TERMS.search(question):
+        return True
     if re.fullmatch(r"\s*(?:haz|crea|genera|muestra)\s+(?:un\s+)?gr[aá]fic[oa](?:\s+visual)?\s*", question, re.IGNORECASE):
         return True
     return bool(re.search(
