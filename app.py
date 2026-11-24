@@ -30,7 +30,8 @@ from reportlab.lib.units import mm
 from email.message import EmailMessage
 from googleapiclient.discovery import build
 from router import (decide, draft_business_email, draft_pdf_analysis, answer_from_drive,
-                    summarize_conversation, FOLLOWUP_TERMS, requested_intent, restrict_to_allowed, AgentAccessDenied)
+                    summarize_conversation, FOLLOWUP_TERMS, requested_intent, restrict_to_allowed,
+                    ambiguous_agent_choices, AgentAccessDenied)
 from user_data_auth import (UserBigQueryAuthError, begin_oauth, disconnect_oauth,
                             finish_oauth, is_connected, query_data_agent_as_user, list_data_agents_as_user, _redirect_uri)
 from user_data_auth import drive_is_connected
@@ -199,6 +200,7 @@ def save_conversation_result(conversation_ref, question, result):
                          library_id=str(result.get("library_id", "")),
                          email_library_id=str((result.get("email") or {}).get("library_id", "")),
                          presentation=result.get("presentation") or {},
+                         choices=(result.get("choices") or [])[:5],
                          context=context,
                          plan={key: plan.get(key) for key in (
                              "alert_metric", "alert_operator", "alert_threshold", "alert_period",
@@ -212,7 +214,7 @@ def save_conversation_result(conversation_ref, question, result):
     })
 
 
-def conversation_recent_agent_turns(conversation_ref, max_turns=5):
+def conversation_recent_agent_turns(conversation_ref, max_turns=5, target_agent=None):
     """Only the latest uninterrupted stretch of one data agent is remembered."""
     if conversation_ref is None:
         return []
@@ -235,13 +237,17 @@ def conversation_recent_agent_turns(conversation_ref, max_turns=5):
             elif pending_question:
                 turns.append({"route": None})
             pending_question = ""
-    if not turns or turns[-1].get("route") not in CATALOG:
+    if not turns or (target_agent is None and turns[-1].get("route") not in CATALOG):
         return []
-    recent_agent = turns[-1]["route"]
+    recent_agent = target_agent or turns[-1]["route"]
     segment = []
+    started = False
     for turn in reversed(turns):
         if turn.get("route") != recent_agent:
+            if target_agent is not None and not started:
+                continue
             break
+        started = True
         segment.append(turn)
         if len(segment) >= max_turns:
             break
@@ -872,7 +878,9 @@ def conversations_list():
 @app.get("/api/agents/available")
 def available_agents():
     try:
-        return jsonify(agents=allowed_data_agents())
+        allowed = allowed_data_agents()
+        return jsonify(agents=allowed, agent_info=[{"id": key, "name": CATALOG[key]["name"]}
+                                                   for key in allowed if key in CATALOG])
     except Exception:
         app.logger.warning("No se pudo descubrir los agentes del usuario", exc_info=True)
         return jsonify(agents=[], error="No se pudieron comprobar los agentes disponibles.")
@@ -931,6 +939,7 @@ def conversation_get(conversation_id):
                          "email_library_id": email_library_id,
                          "email_snapshot": email_snapshot, "email_invalid": email_invalid,
                          "presentation": message.get("presentation", {}),
+                         "choices": message.get("choices", []),
                          "document_library_id": message.get("document_library_id", ""),
                          "charts": message.get("charts", []), "tables": message.get("tables", []),
                          "plan": message.get("plan", {})})
@@ -964,6 +973,9 @@ def ask():
     if not 1 <= len(question) <= 2000:
         return jsonify(error="Escribe una pregunta de 1 a 2000 caracteres."), 400
     conversation_id = str(payload.get("conversation_id", "")).strip()
+    preferred_agent = str(payload.get("preferred_agent") or "").strip()
+    if preferred_agent and preferred_agent not in CATALOG:
+        return jsonify(error="El agente seleccionado no está registrado."), 400
     conversation_ref = None
     conversation_history = []
     if conversation_id:
@@ -974,11 +986,32 @@ def ask():
         if conversation.get("title") == "Nueva conversación":
             conversation_ref.update({"title": question[:72], "updated_at": datetime.now(timezone.utc).isoformat()})
     try:
-        history = conversation_recent_agent_turns(conversation_ref, max_turns=5) if conversation_ref else []
+        history = (conversation_recent_agent_turns(conversation_ref, max_turns=5,
+                   target_agent=preferred_agent if preferred_agent and needs_previous_turn(question) else None)
+                   if conversation_ref else [])
         if history:
             history = [{**turn, "answer": focused_prior_answer(question, turn["answer"])} for turn in history]
         allowed = None if requested_intent(question) == "drive" else allowed_data_agents()
+        choices = ambiguous_agent_choices(question, allowed or []) if not preferred_agent else []
+        if len(choices) > 1:
+            result = {"route": "clarificacion", "data_agent": "", "plan": {"router_mode": "selección"},
+                      "choices": [{"id": key, "name": CATALOG[key]["name"]} for key in choices],
+                      "steps": [{"name": "Router", "detail": "La pregunta abarca más de un agente", "status": "done"}],
+                      "answer": "Tu pregunta combina ventas y producción. Elige qué agente quieres consultar primero."}
+            if conversation_ref:
+                save_conversation_result(conversation_ref, question, result)
+                result["conversation_id"] = conversation_id
+            return jsonify(**result)
         plan = decide(question, history, allowed_agents=allowed)
+        if preferred_agent:
+            if allowed is None or preferred_agent not in allowed:
+                raise AgentAccessDenied("Tu cuenta no tiene acceso al agente seleccionado.")
+            plan["data_agent"] = preferred_agent
+            if plan["route"] in CATALOG:
+                plan["route"] = preferred_agent
+            plan["agent_selected_by_user"] = True
+            if len(ambiguous_agent_choices(question, allowed or [])) > 1:
+                plan["data_question"] = (question + " Responde solo con datos de tu ámbito; indica qué parte requiere consultar el otro agente y no inventes esa parte.")[:2000]
         source = followup_source(question, history) if needs_previous_turn(question) else None
         if source and source["route"] == plan.get("data_agent", "ventas"):
             original = source["question"]
@@ -1054,7 +1087,9 @@ def execute_plan(question: str, plan: dict, conversation_history=None) -> dict:
             raise ValueError("Agente de datos no permitido")
         plan["data_agent"] = data_agent
         plan.setdefault("user_request", question)
-        steps = [{"name": "Router", "detail": f"Ruta elegida: {route} · {plan['router_mode']}", "status": "done"}]
+        route_detail = (f"Agente elegido por ti: {CATALOG[data_agent]['name']}" if plan.get("agent_selected_by_user")
+                        else f"Ruta elegida: {route} · {plan['router_mode']}")
+        steps = [{"name": "Router", "detail": route_detail, "status": "done"}]
         if route == "alerta":
             if data_agent == "adhesiva":
                 raise ValueError("Las alertas de Aplicación Adhesiva aún no están configuradas. No se guardó ninguna regla.")

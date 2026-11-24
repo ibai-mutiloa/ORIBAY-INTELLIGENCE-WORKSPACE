@@ -11,6 +11,7 @@
   let activeTitle = '';
   let salesHistory = [];
   let accessibleAgents = [];
+  const agentSelect = document.querySelector('#agent-select');
   const chartLocale = { decimal: ',', thousands: '.', grouping: [3], currency: ['', ' €'] };
 
   function formattedAnswer(value) {
@@ -83,8 +84,42 @@
     try {
       const data = await api('/api/agents/available');
       accessibleAgents = Array.isArray(data.agents) ? data.agents : [];
+      const previous = agentSelect.value;
+      agentSelect.replaceChildren(new Option('Automático', ''));
+      for (const agent of data.agent_info || []) agentSelect.add(new Option(agent.name, agent.id));
+      if (accessibleAgents.includes(previous)) agentSelect.value = previous;
     } catch { accessibleAgents = []; }
     if (!activeId && !workspaceChat.hidden && workspaceChat.querySelector('#intro')) showWelcome();
+  }
+
+  function addAgentCorrection(card, question, usedAgent) {
+    if (!question || accessibleAgents.length < 2 || !accessibleAgents.includes(usedAgent)) return;
+    const button = make('button', 'route-correction', 'Repetir con otro agente');
+    button.type = 'button';
+    button.addEventListener('click', () => {
+      workspaceInput.value = question;
+      const alternatives = accessibleAgents.filter(id => id !== usedAgent);
+      agentSelect.value = alternatives.length === 1 ? alternatives[0] : '';
+      (alternatives.length === 1 ? workspaceInput : agentSelect).focus();
+      workspaceInput.scrollIntoView({ block: 'nearest' });
+    });
+    card.append(button);
+  }
+
+  function addAgentChoices(card, question, choices) {
+    if (!question || !Array.isArray(choices) || !choices.length) return;
+    const actions = make('div', 'agent-choices');
+    for (const choice of choices.filter(item => accessibleAgents.includes(item.id))) {
+      const button = make('button', 'route-correction', `Consultar ${choice.name}`);
+      button.type = 'button';
+      button.addEventListener('click', () => {
+        workspaceInput.value = question;
+        agentSelect.value = choice.id;
+        workspaceForm.requestSubmit();
+      });
+      actions.append(button);
+    }
+    card.append(actions);
   }
 
   async function summarizeOnLeave() {
@@ -335,7 +370,10 @@
           previousQuestion = message.question || '';
           workspaceChat.append(make('div', 'msg user', previousQuestion));
         } else {
-          workspaceChat.append(makeAssistantCard(message));
+          const card = makeAssistantCard(message);
+          addAgentChoices(card, previousQuestion, message.choices);
+          addAgentCorrection(card, previousQuestion, message.data_agent || message.route);
+          workspaceChat.append(card);
           if ([...accessibleAgents, 'pdf', 'correo', 'presentacion'].includes(message.route) && previousQuestion) {
             salesHistory.push({ route: message.data_agent || (message.route === 'adhesiva' ? 'adhesiva' : 'ventas'), question: previousQuestion, answer: message.answer || '' });
           }
@@ -357,10 +395,12 @@
   workspaceForm.onsubmit = async event => {
     event.preventDefault();
     const question = workspaceInput.value.trim();
+    const preferredAgent = agentSelect.value;
     if (!question) return;
     document.querySelector('#intro')?.remove();
     workspaceChat.append(make('div', 'msg user', question));
     workspaceInput.value = '';
+    agentSelect.value = '';
     workspaceSend.disabled = true;
     const card = make('article', 'msg bot');
     const run = make('div', 'tool-run');
@@ -376,7 +416,7 @@
         titleElement.textContent = activeTitle;
       }
       await refreshHistory();
-      const data = await sendJson('/api/ask', { question, conversation_id: activeId, history: salesHistory.slice(-5) });
+      const data = await sendJson('/api/ask', { question, conversation_id: activeId, preferred_agent: preferredAgent });
       run.replaceChildren();
       const stepIcons = { Router: '✦', Regla: '◷', 'Ventas Oribay': '▥', 'Aplicación Adhesiva': '▥', PDF: '▤', 'Google Slides': serviceIcon('drive'), Gmail: serviceIcon('gmail'), Drive: serviceIcon('drive') };
       const completedSteps = data.steps?.length ? data.steps : [{ name: 'Router', detail: `Ruta elegida: ${data.route}`, status: 'done' }];
@@ -390,6 +430,7 @@
         }
         card.append(formattedAnswer(data.answer));
       }
+      if (data.route === 'clarificacion') addAgentChoices(card, question, data.choices);
       if (data.route === 'alerta') showAlert(card, data.plan);
       for (const spec of data.charts || []) {
         const chart = make('div', 'chart');
@@ -414,11 +455,14 @@
         details.append(make('summary', '', 'Ver consultas SQL'), make('pre', '', data.sql.join('\n\n')));
         card.append(details);
       }
+      addAgentCorrection(card, question, data.data_agent || data.route);
       if ([...accessibleAgents, 'pdf', 'correo', 'presentacion'].includes(data.route)) salesHistory.push({ route: data.data_agent || 'ventas', question, answer: data.answer || '' });
       await refreshHistory();
     } catch (error) {
       setStage(router, 'error', 'No se pudo completar la solicitud');
       card.append(make('p', 'notice', error.message));
+      workspaceInput.value = question;
+      if (accessibleAgents.includes(preferredAgent)) agentSelect.value = preferredAgent;
       await refreshHistory();
     } finally {
       workspaceSend.disabled = false;
