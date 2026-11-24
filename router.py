@@ -32,6 +32,8 @@ Elige presentacion cuando pida diapositivas, una presentación, PowerPoint o Goo
 Consulta el agente de datos correspondiente y prepara una presentación editable con la
 plantilla corporativa; no afirmes que está guardada hasta recibir el enlace de Drive.
 Si aparece path:apps/ia, drive_path es apps/ia; no metas path: en drive_query.
+Una petición de gráfico visual es una consulta al agente de datos correspondiente,
+no un PDF ni una presentación. Conserva la consulta anterior si es un seguimiento.
 drive_query contiene solo el tema o nombre buscado, sin verbos ni palabras de relleno.
 Para buscar o leer, responde después de consultar los archivos; no pidas al usuario
 que vuelva a introducir la búsqueda en un formulario.
@@ -113,6 +115,11 @@ def decide(message: str, history: list | None = None) -> dict:
         result = json.loads(response.text)
         if result.get("route") not in ROUTES:
             raise ValueError("Ruta desconocida")
+        if re.search(r"\bgr[aá]fic[oa]\b", message, re.IGNORECASE) and not re.search(
+                r"\b(?:pdf|informe|documento|presentaci[oó]n|diapositivas?|powerpoint|slides)\b",
+                message, re.IGNORECASE):
+            result["route"] = "adhesiva" if ADHESIVE_TERMS.search(message) else (
+                safe_history[-1]["data_agent"] if safe_history else "ventas")
         if re.search(r"presentaci[oó]n|diapositivas?|powerpoint|google slides|\bpptx?\b", message, re.IGNORECASE):
             result["route"] = "presentacion"
         if result["route"] in ("ventas", "adhesiva"):

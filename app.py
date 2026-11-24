@@ -212,7 +212,7 @@ def conversation_recent_agent_turns(conversation_ref, max_turns=5):
             route = item.get("route")
             answer = str(item.get("answer", "")).strip()[:2400]
             message_agent = item.get("data_agent") or ("adhesiva" if route == "adhesiva" else "ventas")
-            if pending_question and route in ("ventas", "adhesiva", "pdf", "correo") and answer:
+            if pending_question and route in ("ventas", "adhesiva", "pdf", "correo", "presentacion") and answer:
                 turns.append({"route": message_agent, "question": pending_question, "answer": answer})
             elif pending_question:
                 turns.append({"route": None})
@@ -232,11 +232,41 @@ def conversation_recent_agent_turns(conversation_ref, max_turns=5):
 
 def needs_previous_turn(question):
     """Only references to earlier work should carry conversational data forward."""
+    if re.fullmatch(r"\s*(?:haz|crea|genera|muestra)\s+(?:un\s+)?gr[aá]fic[oa](?:\s+visual)?\s*", question, re.IGNORECASE):
+        return True
     return bool(re.search(
         r"\b(?:[eé]st[aeos]|es[aeos]|aqu[eé]ll[ao]s?|anteriores?|[uú]ltim[ao]s?\s+consultas?|"
         r"lo\s+anterior|mismo\s+(?:cliente|periodo|an[aá]lisis)|"
-        r"ahora|siguiendo|contin[uú]a|desglosa|ampl[ií]a|sobre\s+eso)\b",
+        r"ahora|siguiendo|contin[uú]a|desglosa|ampl[ií]a|sobre\s+eso|"
+        r"vimos\s+antes|estos\s+datos|esas\s+cifras|ese\s+top|"
+        r"(?:haz|crea|genera)\s+(?:un\s+)?gr[aá]fico(?:\s+visual)?)\b",
         question, re.IGNORECASE))
+
+
+def followup_source(question, turns):
+    """Resolve a deictic follow-up to the last concrete request in the same agent segment."""
+    if not needs_previous_turn(question):
+        return None
+    for turn in reversed(turns):
+        prior = str(turn.get("question", "")).strip()
+        if prior and not needs_previous_turn(prior) and not re.fullmatch(
+                r"(?:haz|crea|genera|muestra)\s+(?:un\s+)?(?:gr[aá]fico|presentaci[oó]n|pdf)(?:\s+visual)?",
+                prior, re.IGNORECASE):
+            return turn
+    return None
+
+
+def exceeds_requested_top(source_question, tables):
+    match = re.search(r"\btop\s*(\d{1,2})\b", source_question, re.IGNORECASE)
+    if not match:
+        return False
+    limit = int(match.group(1))
+    for table in tables or []:
+        lines = [line for line in str(table).splitlines() if line.strip().startswith("|")]
+        data_rows = [line for line in lines[1:] if not re.fullmatch(r"[|:\-\s]+", line)]
+        if data_rows and len(data_rows) > limit:
+            return True
+    return False
 
 
 def focused_prior_answer(question, answer):
@@ -919,13 +949,25 @@ def ask():
         if conversation.get("title") == "Nueva conversación":
             conversation_ref.update({"title": question[:72], "updated_at": datetime.now(timezone.utc).isoformat()})
     try:
-        history = conversation_recent_agent_turns(conversation_ref, max_turns=1) if conversation_ref and needs_previous_turn(question) else []
+        history = conversation_recent_agent_turns(conversation_ref, max_turns=5) if conversation_ref and needs_previous_turn(question) else []
         if history:
-            history[0]["answer"] = focused_prior_answer(question, history[0]["answer"])
+            history = [{**turn, "answer": focused_prior_answer(question, turn["answer"])} for turn in history]
         plan = decide(question, history)
-        if conversation_ref:
-            conversation_history = conversation_sales_context(
-                conversation_ref, agent=plan.get("data_agent", "ventas"), question=question) if history else []
+        source = followup_source(question, history)
+        if source and source["route"] == plan.get("data_agent", "ventas"):
+            original = source["question"]
+            plan["data_question"] = (f"Resuelve la petición actual: {question}. Su referencia es esta consulta anterior: "
+                                     f"{original}. Conserva exactamente su alcance, periodo, filtros y número de resultados "
+                                     "salvo que la petición actual los cambie explícitamente. Si pide un gráfico, "
+                                     "devuelve un gráfico de esos mismos resultados y su tabla de respaldo. "
+                                     "No cambies un top 5 por un top 10.")[:2000]
+            plan["followup_source"] = original[:1200]
+            conversation_history = [
+                {"userMessage": {"text": original}},
+                {"systemMessage": {"text": {"parts": [source["answer"]]}}},
+            ]
+            plan["context_used"] = True
+            plan["context_reference"] = original[:180]
         result = execute_and_store(question, plan, conversation_history=conversation_history)
         if conversation_ref:
             save_conversation_result(conversation_ref, question, result)
@@ -1050,6 +1092,13 @@ def execute_plan(question: str, plan: dict, conversation_history=None) -> dict:
                                   "para identificar referencias o filtros mencionados; excluye del informe "
                                   "cualquier cliente, planta o análisis anterior ajeno al alcance pedido.")
         data = query_agent(data_question, display_question=question, conversation_history=conversation_history, agent=data_agent)
+        source_top = str(plan.get("followup_source") or "")
+        if source_top and exceeds_requested_top(source_top, data.get("tables")):
+            data = query_agent(data_question + " Repite la consulta con EXACTAMENTE el top solicitado; "
+                               "no amplíes el número de referencias.", display_question=question,
+                               agent=data_agent)
+            if exceeds_requested_top(source_top, data.get("tables")):
+                raise ValueError("El agente amplió el ranking solicitado. No mostraré un top distinto al pedido.")
         if route == "ventas":
             data["answer"] = reconcile_top_two_share(data.get("answer", ""), data.get("tables", []))
         if route in ("pdf", "presentacion") and missing_report_evidence(data):
