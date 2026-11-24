@@ -36,6 +36,8 @@ def _outline(question, evidence):
                 "verified_data; no inventes causalidad. Los totales mensuales NO permiten "
                 "atribuir cambios al mix de producto, tipo de cambio, clientes o producción: "
                 "describe solo la variación observada salvo que haya desglose verificable. "
+                "No afirmes que se aplicó una cotización del BCE, ni describas piezas "
+                "facturadas como entregadas, salvo que el dato lo demuestre expresamente. "
                 "Si dos agentes hablan de temas "
                 "diferentes, separa sus hallazgos. Las cifras deben conservar valor y "
                 "unidad, con formato español. Títulos de 70 caracteres, resúmenes de "
@@ -53,6 +55,13 @@ def _outline(question, evidence):
     has_product_breakdown = bool(re.search(r"\b(?:referencia|familia|producto)\b", detailed_tables, re.IGNORECASE))
     if not has_product_breakdown and re.search(r"\bmix\b|referencias de menor valor", json.dumps(result, ensure_ascii=False), re.IGNORECASE):
         raise ValueError("El borrador atribuye la variación al mix de producto sin un desglose que lo demuestre. No se creó la presentación.")
+    draft = json.dumps(result, ensure_ascii=False)
+    if re.search(r"\b(?:BCE|cotizaci[oó]n|tipo de cambio|divisas?)\b", draft, re.IGNORECASE) and not re.search(
+            r"\b(?:BCE|cotizaci[oó]n|tipo de cambio|divisas?)\b", detailed_tables, re.IGNORECASE):
+        raise ValueError("El borrador afirma una conversión de divisas que los datos consultados no acreditan. No se creó la presentación.")
+    if re.search(r"\b(?:unidades|piezas) entregadas\b", draft, re.IGNORECASE) and not re.search(
+            r"\b(?:entregadas|fecha_entrega)\b", detailed_tables, re.IGNORECASE):
+        raise ValueError("El borrador confunde unidades facturadas con entregadas. No se creó la presentación.")
     return result
 
 
