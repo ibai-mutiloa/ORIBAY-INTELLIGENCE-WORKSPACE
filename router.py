@@ -243,6 +243,10 @@ def draft_pdf_analysis(user_request: str, verified_answer: str, verified_tables:
                     "causas, objetivos, previsiones ni datos. Puedes calcular variaciones solo con cifras "
                     "comparables y explica la base del cálculo; distingue variación absoluta de porcentual. "
                     "Si faltan periodo, muestra, definiciones o contexto para concluir, dilo con claridad. "
+                    "Si el usuario delimita el informe a una consulta anterior, cubre todas las referencias "
+                    "y plantas pertinentes de esa consulta; no selecciones una sola sin que lo pidan. "
+                    "No afirmes que no hubo ventas en otras plantas ni atribuyas una necesidad específica "
+                    "si los datos disponibles no demuestran exhaustividad o causalidad. "
                     "No menciones el modelo, IA, SQL ni que estás redactando. Evita repetir cifras y no añadas "
                     "conclusiones genéricas. Conserva nombres de métricas y filtros tal como aparecen en la fuente."
                 ),

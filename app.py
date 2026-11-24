@@ -228,7 +228,32 @@ def conversation_recent_agent_turns(conversation_ref, max_turns=5):
     return list(reversed(segment))
 
 
-def conversation_sales_context(conversation_ref, agent="ventas", max_turns=5):
+def needs_previous_turn(question):
+    """Only references to earlier work should carry conversational data forward."""
+    return bool(re.search(
+        r"\b(?:[eé]st[aeos]|aqu[eé]ll[ao]s?|anteriores?|[uú]ltim[ao]s?\s+consultas?|"
+        r"lo\s+anterior|mismo\s+(?:cliente|periodo|an[aá]lisis)|"
+        r"ahora|siguiendo|contin[uú]a|desglosa|ampl[ií]a|sobre\s+eso)\b",
+        question, re.IGNORECASE))
+
+
+def focused_prior_answer(question, answer):
+    """Select the relevant numbered section of a mixed previous answer."""
+    sections = re.split(r"(?m)(?=^\s*\d+\.\s+[^\n]+\n)", answer)
+    if len(sections) < 3:
+        return answer
+    terms = set(re.findall(r"[\w-]{5,}", question.casefold())) - {
+        "genera", "generar", "informe", "piezas", "última", "consulta", "ventas", "sobre"}
+    ranked = []
+    for section in sections:
+        heading = section.splitlines()[0].casefold() if section.strip() else ""
+        score = sum(term in heading for term in terms)
+        ranked.append((score, section))
+    best_score, best_section = max(ranked, key=lambda item: item[0])
+    return best_section.strip() if best_score else answer
+
+
+def conversation_sales_context(conversation_ref, agent="ventas", max_turns=1, question=""):
     """Pass only current-agent turns to the Conversational Analytics agent."""
     turns = conversation_recent_agent_turns(conversation_ref, max_turns=max_turns)
     if not turns or turns[-1]["route"] != agent:
@@ -237,7 +262,7 @@ def conversation_sales_context(conversation_ref, agent="ventas", max_turns=5):
     for turn in turns:
         transcript.extend([
             {"userMessage": {"text": turn["question"]}},
-            {"systemMessage": {"text": {"parts": [turn["answer"]]}}},
+            {"systemMessage": {"text": {"parts": [focused_prior_answer(question, turn["answer"])]}}},
         ])
     return transcript
 
@@ -830,10 +855,13 @@ def ask():
         if conversation.get("title") == "Nueva conversación":
             conversation_ref.update({"title": question[:72], "updated_at": datetime.now(timezone.utc).isoformat()})
     try:
-        history = conversation_recent_agent_turns(conversation_ref) if conversation_ref else []
+        history = conversation_recent_agent_turns(conversation_ref, max_turns=1) if conversation_ref and needs_previous_turn(question) else []
+        if history:
+            history[0]["answer"] = focused_prior_answer(question, history[0]["answer"])
         plan = decide(question, history)
         if conversation_ref:
-            conversation_history = conversation_sales_context(conversation_ref, agent=plan.get("data_agent", "ventas"))
+            conversation_history = conversation_sales_context(
+                conversation_ref, agent=plan.get("data_agent", "ventas"), question=question) if history else []
         result = execute_and_store(question, plan, conversation_history=conversation_history)
         if conversation_ref:
             save_conversation_result(conversation_ref, question, result)
@@ -946,6 +974,25 @@ def execute_plan(question: str, plan: dict, conversation_history=None) -> dict:
                                   "para identificar referencias o filtros mencionados; excluye del informe "
                                   "cualquier cliente, planta o análisis anterior ajeno al alcance pedido.")
         data = query_agent(data_question, display_question=question, conversation_history=conversation_history, agent=data_agent)
+        if route == "pdf" and re.search(r"[uú]ltima\s+consulta", question, re.IGNORECASE) and conversation_history:
+            prior_answer = conversation_history[-1]["systemMessage"]["text"]["parts"][0]
+            expected_refs = {code for code in re.findall(r"`([A-Za-z0-9.-]{4,})`", prior_answer)
+                             if re.search(r"\d", code)}
+            current_text = data.get("answer", "") + " " + " ".join(data.get("tables", []))
+            missing = {code for code in expected_refs if code.casefold() not in current_text.casefold()}
+            if missing:
+                retry_question = data_question + (
+                    " La consulta anterior contenía estas referencias verificadas: "
+                    + ", ".join(sorted(expected_refs)) +
+                    ". Incluye todas las referencias dentro del alcance solicitado y sus plantas; "
+                    "no reduzcas el informe a una sola referencia.")
+                data = query_agent(retry_question, display_question=question,
+                                   conversation_history=conversation_history, agent=data_agent)
+                current_text = data.get("answer", "") + " " + " ".join(data.get("tables", []))
+                missing = {code for code in expected_refs if code.casefold() not in current_text.casefold()}
+                if missing:
+                    raise ValueError("No pude verificar todas las referencias de la última consulta "
+                                     "para el PDF. No generaré un informe incompleto; reformula el alcance.")
         steps.append({"name": "Aplicación Adhesiva" if data_agent == "adhesiva" else "Ventas Oribay", "detail": "Consulté el agente de datos y recibí sus resultados", "status": "done"})
         if route == "pdf":
             data["source_answer"] = data.get("answer", "")
