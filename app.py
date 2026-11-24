@@ -29,12 +29,14 @@ from reportlab.lib.enums import TA_CENTER
 from reportlab.lib.units import mm
 from email.message import EmailMessage
 from googleapiclient.discovery import build
-from router import decide, draft_business_email, draft_pdf_analysis, answer_from_drive, summarize_conversation, FOLLOWUP_TERMS
+from router import (decide, draft_business_email, draft_pdf_analysis, answer_from_drive,
+                    summarize_conversation, FOLLOWUP_TERMS, requested_intent, restrict_to_allowed, AgentAccessDenied)
 from user_data_auth import (UserBigQueryAuthError, begin_oauth, disconnect_oauth,
                             finish_oauth, is_connected, query_data_agent_as_user, list_data_agents_as_user, _redirect_uri)
 from user_data_auth import drive_is_connected
 import drive_tools
 from presentations import create_presentation
+from agent_catalog import CATALOG
 
 app = Flask(__name__)
 PROJECT = "aad-analitica-oee"
@@ -64,6 +66,13 @@ def gmail_credentials(sender):
 
 def current_owner():
     return (getattr(g, "user_email", None) or os.environ.get("ORIBAY_USER_EMAIL", "local-user")).lower()
+
+
+def allowed_data_agents():
+    """One discovery call per request; failure denies access rather than guessing permissions."""
+    if not hasattr(g, "allowed_data_agents"):
+        g.allowed_data_agents = list_data_agents_as_user(current_owner())
+    return g.allowed_data_agents
 
 
 def save_library_item(kind, title, payload, object_path=None):
@@ -220,13 +229,13 @@ def conversation_recent_agent_turns(conversation_ref, max_turns=5):
             route = item.get("route")
             answer = str(item.get("answer", "")).strip()[:2400]
             message_agent = item.get("data_agent") or ("adhesiva" if route == "adhesiva" else "ventas")
-            if pending_question and route in ("ventas", "adhesiva", "pdf", "correo", "presentacion") and answer:
+            if pending_question and route in (set(CATALOG) | {"pdf", "correo", "presentacion"}) and answer:
                 turns.append({"route": message_agent, "question": pending_question, "answer": answer,
                               "context": item.get("context") or {}})
             elif pending_question:
                 turns.append({"route": None})
             pending_question = ""
-    if not turns or turns[-1].get("route") not in ("ventas", "adhesiva"):
+    if not turns or turns[-1].get("route") not in CATALOG:
         return []
     recent_agent = turns[-1]["route"]
     segment = []
@@ -701,13 +710,15 @@ def query_agent(question: str, user: str = None, display_question: str = "", con
     owner = (user or getattr(g, "user_email", None) or os.environ.get("ORIBAY_USER_EMAIL", "")).lower()
     if not owner:
         raise UserBigQueryAuthError("No se pudo identificar la cuenta para consultar BigQuery.")
+    if agent not in allowed_data_agents():
+        raise AgentAccessDenied("Tu cuenta no tiene acceso al agente de datos solicitado.")
     result = query_data_agent_as_user(owner, question, display_question, history=conversation_history, agent=agent)
     if not result.get("answer") and not result.get("charts") and not result.get("tables"):
         app.logger.error("Respuesta MCP del agente sin artefactos reconocibles")
         raise ValueError("El agente de datos no devolvió datos verificables")
     answer = result.get("answer", "")
     if has_access_refusal(answer):
-        app.logger.error("Ventas Oribay informó falta de acceso a los datos; se bloquea la generación de artefactos")
+        app.logger.error("El agente informó falta de acceso a los datos; se bloquea la generación de artefactos")
         raise SalesDataUnavailable(
             "El agente indica que no puede acceder a los datos solicitados. "
             "No se ha creado ningún borrador con datos incompletos. Revisa los permisos del agente e inténtalo de nuevo.")
@@ -861,7 +872,7 @@ def conversations_list():
 @app.get("/api/agents/available")
 def available_agents():
     try:
-        return jsonify(agents=list_data_agents_as_user(current_owner()))
+        return jsonify(agents=allowed_data_agents())
     except Exception:
         app.logger.warning("No se pudo descubrir los agentes del usuario", exc_info=True)
         return jsonify(agents=[], error="No se pudieron comprobar los agentes disponibles.")
@@ -966,7 +977,8 @@ def ask():
         history = conversation_recent_agent_turns(conversation_ref, max_turns=5) if conversation_ref else []
         if history:
             history = [{**turn, "answer": focused_prior_answer(question, turn["answer"])} for turn in history]
-        plan = decide(question, history)
+        allowed = None if requested_intent(question) == "drive" else allowed_data_agents()
+        plan = decide(question, history, allowed_agents=allowed)
         source = followup_source(question, history) if needs_previous_turn(question) else None
         if source and source["route"] == plan.get("data_agent", "ventas"):
             original = source["question"]
@@ -987,12 +999,14 @@ def ask():
             save_conversation_result(conversation_ref, question, result)
             result["conversation_id"] = conversation_id
         return jsonify(**result)
+    except AgentAccessDenied as exc:
+        return jsonify(error=str(exc)), 403
     except Exception as exc:
         app.logger.exception("Error consultando el agente de datos")
         if conversation_ref:
             conversation_message(conversation_ref, "assistant", answer="No pude completar esta solicitud. Puedes intentarlo de nuevo.", route="error")
             conversation_ref.update({"updated_at": datetime.now(timezone.utc).isoformat(), "message_count": firestore.Increment(2)})
-        message = str(exc) if isinstance(exc, (SalesDataUnavailable, ValueError)) else f"No se pudo consultar el agente de datos: {type(exc).__name__}"
+        message = str(exc) if isinstance(exc, (SalesDataUnavailable, UserBigQueryAuthError, ValueError)) else f"No se pudo consultar el agente de datos: {type(exc).__name__}"
         return jsonify(error=message), 502
 
 
@@ -1002,7 +1016,13 @@ def route_request():
     question = str(payload.get("question", "")).strip()
     if not 1 <= len(question) <= 2000:
         return jsonify(error="Escribe una pregunta de 1 a 2000 caracteres."), 400
-    return jsonify(plan=decide(question, payload.get("history")))
+    try:
+        allowed = None if requested_intent(question) == "drive" else allowed_data_agents()
+        return jsonify(plan=decide(question, payload.get("history"), allowed_agents=allowed))
+    except AgentAccessDenied as exc:
+        return jsonify(error=str(exc)), 403
+    except UserBigQueryAuthError as exc:
+        return jsonify(error=str(exc)), 401
 
 
 @app.post("/api/execute")
@@ -1010,10 +1030,14 @@ def execute_request():
     payload = request.get_json(silent=True) or {}
     question = str(payload.get("question", "")).strip()
     plan = payload.get("plan") or {}
-    if not 1 <= len(question) <= 2000 or plan.get("route") not in ("ventas", "adhesiva", "alerta", "pdf", "correo", "drive", "presentacion"):
+    if not 1 <= len(question) <= 2000 or plan.get("route") not in (set(CATALOG) | {"alerta", "pdf", "correo", "drive", "presentacion"}):
         return jsonify(error="Solicitud no válida."), 400
     try:
+        if plan.get("route") != "drive":
+            restrict_to_allowed(plan, question, allowed_data_agents(), strict=True)
         return jsonify(**execute_and_store(question, plan))
+    except AgentAccessDenied as exc:
+        return jsonify(error=str(exc)), 403
     except Exception as exc:
         app.logger.exception("Error ejecutando herramienta")
         message = str(exc) if isinstance(exc, SalesDataUnavailable) else f"No se pudo ejecutar la herramienta: {type(exc).__name__}"
@@ -1022,8 +1046,11 @@ def execute_request():
 
 def execute_plan(question: str, plan: dict, conversation_history=None) -> dict:
         route = plan["route"]
-        data_agent = route if route in ("ventas", "adhesiva") else plan.get("data_agent", "ventas")
-        if data_agent not in ("ventas", "adhesiva"):
+        if route != "drive":
+            restrict_to_allowed(plan, question, allowed_data_agents(), strict=True)
+            route = plan["route"]
+        data_agent = route if route in CATALOG else plan.get("data_agent", "ventas")
+        if data_agent not in CATALOG:
             raise ValueError("Agente de datos no permitido")
         plan["data_agent"] = data_agent
         plan.setdefault("user_request", question)
@@ -1119,7 +1146,7 @@ def execute_plan(question: str, plan: dict, conversation_history=None) -> dict:
             raise ValueError("El agente no ha devuelto datos suficientes para crear el documento. "
                              "Indica el alcance y periodo o vuelve a consultar.")
         if route == "presentacion":
-            steps.append({"name": "Aplicación Adhesiva" if data_agent == "adhesiva" else "Ventas Oribay",
+            steps.append({"name": CATALOG[data_agent]["name"],
                           "detail": "Consulté el agente de datos y recibí sus resultados", "status": "done"})
             evidence = [{"agent": data_agent, "answer": data.get("answer", "")[:10000],
                          "tables": data.get("tables", [])[:5]}]
@@ -1132,7 +1159,7 @@ def execute_plan(question: str, plan: dict, conversation_history=None) -> dict:
                     raise ValueError("El segundo agente no devolvió datos suficientes para la presentación.")
                 evidence.append({"agent": second, "answer": other.get("answer", "")[:10000],
                                  "tables": other.get("tables", [])[:5]})
-                steps.append({"name": "Aplicación Adhesiva" if second == "adhesiva" else "Ventas Oribay",
+                steps.append({"name": CATALOG[second]["name"],
                               "detail": "Consulté el segundo agente de datos", "status": "done"})
             deck = create_presentation(current_owner(), question, evidence)
             data["presentation"] = deck
@@ -1160,7 +1187,7 @@ def execute_plan(question: str, plan: dict, conversation_history=None) -> dict:
                     raise ValueError("No pude verificar todas las referencias de la última consulta "
                                      "para el PDF. No generaré un informe incompleto; reformula el alcance.")
         if route != "presentacion":
-            steps.append({"name": "Aplicación Adhesiva" if data_agent == "adhesiva" else "Ventas Oribay", "detail": "Consulté el agente de datos y recibí sus resultados", "status": "done"})
+            steps.append({"name": CATALOG[data_agent]["name"], "detail": "Consulté el agente de datos y recibí sus resultados", "status": "done"})
         if route == "pdf":
             data["source_answer"] = data.get("answer", "")
             data["answer"] = draft_pdf_analysis(question, data.get("answer", ""), data.get("tables", []), data_agent=data_agent)
@@ -1176,7 +1203,7 @@ def execute_plan(question: str, plan: dict, conversation_history=None) -> dict:
 def execute_and_store(question: str, plan: dict, conversation_history=None) -> dict:
     result = execute_plan(question, plan, conversation_history=conversation_history)
     route = result.get("route")
-    if route in ("ventas", "adhesiva", "pdf", "correo", "presentacion") and (result.get("answer") or result.get("charts") or result.get("tables")):
+    if route in (set(CATALOG) | {"pdf", "correo", "presentacion"}) and (result.get("answer") or result.get("charts") or result.get("tables")):
         saved_charts = result.get("charts", [])[:6]
         while saved_charts and len(json.dumps(saved_charts, ensure_ascii=False).encode("utf-8")) > 650_000:
             saved_charts.pop()
@@ -1197,7 +1224,7 @@ def execute_and_store(question: str, plan: dict, conversation_history=None) -> d
 @app.post("/api/pdf")
 def pdf():
     data = request.get_json(silent=True) or {}
-    data_agent = data.get("data_agent") if data.get("data_agent") in ("ventas", "adhesiva") else "ventas"
+    data_agent = data.get("data_agent") if data.get("data_agent") in CATALOG else "ventas"
     source_name = "Aplicación Adhesiva" if data_agent == "adhesiva" else "Ventas Oribay"
     answer = str(data.get("answer", ""))[:12000]
     charts = data.get("charts") or []

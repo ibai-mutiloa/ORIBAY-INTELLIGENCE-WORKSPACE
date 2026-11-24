@@ -6,14 +6,45 @@ import re
 
 from google.genai import Client, types
 from google.oauth2.credentials import Credentials
+from agent_catalog import CATALOG
 
-ROUTES = {"ventas", "adhesiva", "alerta", "pdf", "correo", "drive", "presentacion"}
+ROUTES = set(CATALOG) | {"alerta", "pdf", "correo", "drive", "presentacion"}
 ADHESIVE_TERMS = re.compile(r"adhesiv|\b(?:oee|robot(?:es)?|m[aá]quinas?|rb\d+|balanceo|balanceios|producci[oó]n|rendimiento|paradas|te[oó]ricos?|turnos?|calidad)\b", re.IGNORECASE)
 FOLLOWUP_TERMS = re.compile(r"\b(?:que\s+(?:has|hab[ií]as|hemos)\s+(?:considerado|usado|visto|analizado)|"
                             r"(?:referencias?|piezas?|datos|resultados?)\s+(?:que\s+)?(?:has|hemos)\s+(?:considerado|visto|usado)|"
                             r"(?:puedes?\s+)?desglos[ae]r?|sobre\s+(?:eso|esto)|lo\s+anterior)\b", re.IGNORECASE)
 EXPLICIT_ADHESIVE = re.compile(r"adhesiv|\b(?:oee|robot(?:es)?|m[aá]quina\s+rb\d+|rb\d+|producci[oó]n|planta|paradas)\b", re.IGNORECASE)
 EXPLICIT_SALES = re.compile(r"\b(?:ventas?|facturaci[oó]n|clientes?|pedidos?|previsi[oó]n\s+de\s+ventas?)\b", re.IGNORECASE)
+
+
+class AgentAccessDenied(PermissionError):
+    pass
+
+
+def restrict_to_allowed(plan: dict, message: str, allowed_agents: list | None, strict=False) -> dict:
+    """Never substitute an inaccessible, explicitly requested domain with another agent."""
+    if allowed_agents is None or plan.get("route") == "drive":
+        return plan
+    allowed = set(allowed_agents) & set(CATALOG)
+    if not allowed:
+        raise AgentAccessDenied("No tienes agentes de datos disponibles con esta cuenta.")
+    explicit = "adhesiva" if EXPLICIT_ADHESIVE.search(message) and not EXPLICIT_SALES.search(message) else (
+        "ventas" if EXPLICIT_SALES.search(message) and not EXPLICIT_ADHESIVE.search(message) else None)
+    if explicit and explicit not in allowed:
+        raise AgentAccessDenied(f"Tu cuenta no tiene acceso al agente {CATALOG[explicit]['name']}.")
+    chosen = plan.get("data_agent")
+    if strict and (chosen not in allowed or (plan.get("route") in CATALOG and plan["route"] != chosen)):
+        raise AgentAccessDenied("Tu cuenta no tiene acceso al agente solicitado.")
+    if explicit:
+        chosen = explicit
+    elif chosen not in allowed and len(allowed) == 1:
+        chosen = next(iter(allowed))
+    if chosen not in allowed:
+        raise AgentAccessDenied("Tu cuenta no tiene acceso al agente solicitado.")
+    plan["data_agent"] = chosen
+    if plan.get("route") in CATALOG:
+        plan["route"] = chosen
+    return plan
 
 
 def requested_intent(message: str) -> str | None:
@@ -41,7 +72,7 @@ def requested_intent(message: str) -> str | None:
 def followup_agent(message: str, history: list | None) -> str | None:
     """A referential follow-up stays with its previous data agent unless it explicitly switches domain."""
     previous = next((item for item in reversed(history or []) if isinstance(item, dict)
-                     and (item.get("route") or item.get("data_agent")) in ("ventas", "adhesiva")), None)
+                     and (item.get("route") or item.get("data_agent")) in CATALOG), None)
     if not previous or not FOLLOWUP_TERMS.search(message):
         return None
     prior_agent = previous.get("route") or previous.get("data_agent")
@@ -51,13 +82,13 @@ def followup_agent(message: str, history: list | None) -> str | None:
         return None
     return prior_agent
 SYSTEM = """Eres el router de Oribay. Devuelve SOLO JSON con:
-route (ventas|adhesiva|alerta|pdf|correo|drive|presentacion), data_agent (ventas|adhesiva), data_question, title, recipient, subject,
+route (ID de available_agents o alerta|pdf|correo|drive|presentacion), data_agent (ID de available_agents), data_question, title, recipient, subject,
 drive_action (search|read|save_pdf|create_folder|rename|move), drive_query,
 drive_file, drive_destination, drive_path,
 alert_metric, alert_operator (>|>=|<|<=), alert_threshold (número o null),
 alert_period, alert_frequency, alert_filters, needs_clarification, clarification,
 context_used (boolean), context_reference (texto breve).
-Elige adhesiva para aplicación adhesiva, OEE, robots, producción, calidad o balanceo de carga; ventas para facturación, clientes, importes y ventas. En preguntas de seguimiento breves hereda data_agent del análisis pertinente más reciente. Si cambia el agente, empieza un contexto nuevo; no reutilices preguntas, filtros ni resultados del otro agente. No mezcles datos de agentes distintos. Para PDF y correo, data_question pide al agente elegido
+Elige únicamente entre los IDs de available_agents. Usa sus descripciones y ejemplos para reconocer el ámbito. En preguntas de seguimiento breves hereda data_agent del análisis pertinente más reciente. Si cambia el agente, empieza un contexto nuevo; no reutilices preguntas, filtros ni resultados del otro agente. No mezcles datos de agentes distintos. Para PDF y correo, data_question pide al agente elegido
 los datos estrictamente necesarios. Un mensaje o correo puntual que acompaña un análisis
 (por ejemplo, «resume los últimos 3 meses para AC032 y envíame un mensaje») va por correo,
 nunca por alerta. «Envíame/mándame un mensaje» sin otro destinatario significa preparar
@@ -100,15 +131,15 @@ def _fallback(message: str, history: list | None = None) -> dict:
     lower = message.lower()
     data_agent = "adhesiva" if ADHESIVE_TERMS.search(lower) else "ventas"
     if data_agent == "ventas" and not re.search(r"ventas?|factur|clientes?|importes?|pedido", lower):
-        previous = next((item for item in reversed(history or []) if isinstance(item, dict) and item.get("route") in ("ventas", "adhesiva")), None)
-        if previous and previous.get("route") == "adhesiva":
-            data_agent = "adhesiva"
+        previous = next((item for item in reversed(history or []) if isinstance(item, dict) and item.get("route") in CATALOG), None)
+        if previous:
+            data_agent = previous["route"]
     intent = requested_intent(message)
     route = data_agent if intent in (None, "consulta") else intent
     inherited = followup_agent(message, history)
     if inherited:
         data_agent = inherited
-        if route in ("ventas", "adhesiva"):
+        if route in CATALOG:
             route = inherited
     drive_action = ("save_pdf" if re.search(r"\b(?:guarda|guardar|sube|subir)\b.*\b(?:pdf|informe)\b", lower) else
                     "create_folder" if re.search(r"\b(?:crea|crear|nueva)\b.*\bcarpeta\b", lower) else
@@ -134,19 +165,21 @@ def _fallback(message: str, history: list | None = None) -> dict:
             "recipient": "", "router_mode": "reglas"}
 
 
-def decide(message: str, history: list | None = None) -> dict:
+def decide(message: str, history: list | None = None, allowed_agents: list | None = None) -> dict:
     token = os.environ.get("ORIBAY_TEST_ACCESS_TOKEN")
     try:
         client = Client(vertexai=True, project="aad-analitica-oee", location="global",
                         credentials=Credentials(token=token) if token else None)
         safe_history = []
         for item in (history or [])[-5:]:
-            if isinstance(item, dict) and item.get("route") in ("ventas", "adhesiva"):
+            if isinstance(item, dict) and item.get("route") in CATALOG and (allowed_agents is None or item.get("route") in allowed_agents):
                 safe_history.append({"data_agent": item.get("route"), "question": str(item.get("question", ""))[:500],
                                      "answer": str(item.get("answer", ""))[:1200]})
         response = client.models.generate_content(
             model=os.environ.get("ORIBAY_ROUTER_MODEL", "gemini-2.5-flash"),
-            contents=json.dumps({"previous_analyses": safe_history,
+            contents=json.dumps({"available_agents": [{"id": item["id"], "description": item["description"], "examples": item["examples"]}
+                                                      for key, item in CATALOG.items() if allowed_agents is None or key in allowed_agents],
+                                 "previous_analyses": safe_history,
                                  "current_user_request": message}, ensure_ascii=False),
             config=types.GenerateContentConfig(system_instruction=SYSTEM, response_mime_type="application/json", temperature=0),
         )
@@ -155,25 +188,25 @@ def decide(message: str, history: list | None = None) -> dict:
             raise ValueError("Ruta desconocida")
         intent = requested_intent(message)
         if intent == "consulta":
-            result["route"] = result.get("data_agent") if result.get("data_agent") in ("ventas", "adhesiva") else "ventas"
+            result["route"] = result.get("data_agent") if result.get("data_agent") in CATALOG else "ventas"
         elif intent:
             result["route"] = intent
         inherited = followup_agent(message, safe_history)
         if inherited:
             result["data_agent"] = inherited
-            if result["route"] in ("ventas", "adhesiva"):
+            if result["route"] in CATALOG:
                 result["route"] = inherited
         if intent == "consulta" and safe_history and not (EXPLICIT_ADHESIVE.search(message) or EXPLICIT_SALES.search(message)):
             result["route"] = safe_history[-1]["data_agent"]
-        if result["route"] in ("ventas", "adhesiva"):
+        if result["route"] in CATALOG:
             result["data_agent"] = result["route"]
-        elif result.get("data_agent") not in ("ventas", "adhesiva"):
+        elif result.get("data_agent") not in CATALOG:
             result["data_agent"] = "adhesiva" if ADHESIVE_TERMS.search(message) else "ventas"
         if result["route"] in ("pdf", "correo", "alerta", "presentacion") and ADHESIVE_TERMS.search(message) and not re.search(r"factur|ventas?|clientes?|pedido", message, re.IGNORECASE):
             result["data_agent"] = "adhesiva"
         if inherited:
             result["data_agent"] = inherited
-        result["intent"] = intent or ("consulta" if result["route"] in ("ventas", "adhesiva") else result["route"])
+        result["intent"] = intent or ("consulta" if result["route"] in CATALOG else result["route"])
         if result.get("route") == "drive" and result.get("drive_action") not in {"search", "read", "save_pdf", "create_folder", "rename", "move"}:
             result["drive_action"] = "search"
         if result.get("route") == "alerta" and result.get("context_used") and safe_history:
@@ -189,10 +222,12 @@ def decide(message: str, history: list | None = None) -> dict:
                 filters.append("sin portes")
             result["alert_filters"] = filters
         result["router_mode"] = "Gemini"
-        return result
+        return restrict_to_allowed(result, message, allowed_agents)
+    except AgentAccessDenied:
+        raise
     except Exception as exc:
         logging.getLogger(__name__).warning("Router Gemini no disponible: %s", exc)
-        return _fallback(message, history)
+        return restrict_to_allowed(_fallback(message, history), message, allowed_agents)
 
 
 def answer_from_drive(question: str, evidence: list[dict]) -> str:

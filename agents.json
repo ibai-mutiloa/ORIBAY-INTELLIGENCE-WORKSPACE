@@ -1,0 +1,16 @@
+[
+  {
+    "id": "ventas",
+    "name": "Ventas Oribay",
+    "resource": "projects/aad-analitica-oee/locations/eu/dataAgents/agent_33fe6cdf-ec2d-4cd8-93c7-a5c87fc4c345",
+    "description": "Facturación, clientes, pedidos, previsiones comerciales y referencias vendidas",
+    "examples": ["Facturación de la pieza 24", "Referencias comerciales en zamak"]
+  },
+  {
+    "id": "adhesiva",
+    "name": "Aplicación Adhesiva",
+    "resource": "projects/aad-analitica-oee/locations/eu/dataAgents/oee-oribay",
+    "description": "Producción de planta, máquinas, paradas y OEE",
+    "examples": ["OEE de RB4 en la semana 22", "Paradas de aplicación adhesiva"]
+  }
+]

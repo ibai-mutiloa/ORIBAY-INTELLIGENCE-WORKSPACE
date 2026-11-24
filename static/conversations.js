@@ -241,8 +241,8 @@
     if (message.presentation?.url) stage(trace, serviceIcon('drive'), 'Google Slides', 'Presentación guardada en Drive', 'done');
     card.append(trace);
     if (message.answer) {
-      if (['ventas', 'adhesiva'].includes(message.route) && !/^\s*#{1,3}\s/m.test(message.answer)) {
-        card.append(make('h2', 'analysis-title', message.route === 'adhesiva' ? 'Análisis de producción' : 'Análisis de ventas'));
+      if (accessibleAgents.includes(message.route) && !/^\s*#{1,3}\s/m.test(message.answer)) {
+        card.append(make('h2', 'analysis-title', message.route === 'adhesiva' ? 'Análisis de producción' : message.route === 'ventas' ? 'Análisis de ventas' : 'Análisis de datos'));
       }
       card.append(formattedAnswer(message.answer));
     }
@@ -336,7 +336,7 @@
           workspaceChat.append(make('div', 'msg user', previousQuestion));
         } else {
           workspaceChat.append(makeAssistantCard(message));
-          if (['ventas', 'adhesiva', 'pdf', 'correo'].includes(message.route) && previousQuestion) {
+          if ([...accessibleAgents, 'pdf', 'correo', 'presentacion'].includes(message.route) && previousQuestion) {
             salesHistory.push({ route: message.data_agent || (message.route === 'adhesiva' ? 'adhesiva' : 'ventas'), question: previousQuestion, answer: message.answer || '' });
           }
           previousQuestion = '';
@@ -385,8 +385,8 @@
         row.style.animationDelay = `${index * 90}ms`;
       });
       if (data.answer) {
-        if (['ventas', 'adhesiva'].includes(data.route) && !/^\s*#{1,3}\s/m.test(data.answer)) {
-          card.append(make('h2', 'analysis-title', data.route === 'adhesiva' ? 'Análisis de producción' : 'Análisis de ventas'));
+        if (accessibleAgents.includes(data.route) && !/^\s*#{1,3}\s/m.test(data.answer)) {
+          card.append(make('h2', 'analysis-title', data.route === 'adhesiva' ? 'Análisis de producción' : data.route === 'ventas' ? 'Análisis de ventas' : 'Análisis de datos'));
         }
         card.append(formattedAnswer(data.answer));
       }
@@ -414,7 +414,7 @@
         details.append(make('summary', '', 'Ver consultas SQL'), make('pre', '', data.sql.join('\n\n')));
         card.append(details);
       }
-      if (['ventas', 'adhesiva', 'pdf', 'correo', 'presentacion'].includes(data.route)) salesHistory.push({ route: data.data_agent || 'ventas', question, answer: data.answer || '' });
+      if ([...accessibleAgents, 'pdf', 'correo', 'presentacion'].includes(data.route)) salesHistory.push({ route: data.data_agent || 'ventas', question, answer: data.answer || '' });
       await refreshHistory();
     } catch (error) {
       setStage(router, 'error', 'No se pudo completar la solicitud');

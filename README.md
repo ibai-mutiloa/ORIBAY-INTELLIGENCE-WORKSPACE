@@ -34,7 +34,11 @@ Chat paralelo con cuatro rutas visibles. El router Gemini decide entre consulta 
 
 El router separa la intención de herramienta (`consulta`, `pdf`, `presentacion`, `correo`, `alerta`, `drive`) del agente de datos. El historial reciente del mismo agente se ofrece al router para decidir la ruta; solo las preguntas que hacen referencia a resultados anteriores envían contexto al agente de datos. Cada nueva respuesta guarda metadatos acotados de su consulta de origen (agente, años, referencias y límite de `top N`) en Firestore para resolver seguimientos posteriores. Un cambio explícito de dominio inicia un tramo nuevo de memoria. Las pruebas de regresión cubren el top 5, el gráfico, el PDF de OEE y el desglose comercial de zamak/acero inoxidable.
 
-Esta fase todavía usa los dos agentes configurados en código. El catálogo administrable, la selección por permisos antes del router y la evaluación con un conjunto amplio de conversaciones quedan para las siguientes fases.
+La evaluación con un conjunto amplio de conversaciones y los criterios de incorporación de nuevos agentes quedan para la siguiente fase.
+
+## Catálogo y autorización de agentes (piloto)
+
+`agents.json` define los agentes de datos registrados (ID, nombre, recurso de Conversational Analytics, descripción y ejemplos). La aplicación valida este catálogo al arrancar. Antes de decidir una ruta de datos, consulta por OAuth los agentes visibles para la cuenta conectada y envía al router solo sus fichas. La ejecución comprueba de nuevo el ID autorizado y rechaza un plan manipulado con HTTP 403; la API de Google aplica además los permisos reales del usuario. Los agentes de `agents.json` se pueden ampliar sin editar el mapa de recursos Python. Las reglas especializadas de Ventas, OEE y alertas siguen ligadas a esos dos ámbitos; antes de registrar un tercer agente hay que definir sus capacidades y añadir casos de evaluación del enrutamiento.
 
 ## Estado
 

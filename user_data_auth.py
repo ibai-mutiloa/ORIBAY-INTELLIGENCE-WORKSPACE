@@ -10,11 +10,10 @@ from cryptography.fernet import Fernet, InvalidToken
 from google.cloud import firestore
 from google.oauth2 import id_token
 from google.auth.transport import requests as google_requests
+from agent_catalog import CATALOG
 
 PROJECT = "aad-analitica-oee"
-AGENT = "projects/aad-analitica-oee/locations/eu/dataAgents/agent_33fe6cdf-ec2d-4cd8-93c7-a5c87fc4c345"
-ADHESIVE_AGENT = "projects/aad-analitica-oee/locations/eu/dataAgents/oee-oribay"
-DATA_AGENTS = {"ventas": AGENT, "adhesiva": ADHESIVE_AGENT}
+DATA_AGENTS = {key: item["resource"] for key, item in CATALOG.items()}
 MCP_URL = "https://geminidataanalytics.googleapis.com/mcp"
 DRIVE_SCOPE = "https://www.googleapis.com/auth/drive"
 SCOPES = "https://www.googleapis.com/auth/geminidataanalytics https://www.googleapis.com/auth/bigquery.readonly " + DRIVE_SCOPE + " openid email"
