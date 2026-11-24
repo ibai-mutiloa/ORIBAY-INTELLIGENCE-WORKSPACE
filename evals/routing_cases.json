@@ -14,5 +14,6 @@
   {"id":"cambio_a_oee","question":"Ahora desglosa su OEE en la máquina RB4","history":[{"route":"ventas","question":"Ventas de pieza 24","answer":"Datos"}],"allowed":["ventas","adhesiva"],"route":"adhesiva","agent":"adhesiva"},
   {"id":"cambio_a_ventas","question":"Volvamos a ventas: ¿a qué clientes vendemos la pieza 191?","history":[{"route":"adhesiva","question":"OEE de RB4","answer":"Datos"}],"allowed":["ventas","adhesiva"],"route":"ventas","agent":"ventas"},
   {"id":"sin_acceso_oee","question":"Muestra el OEE de RB4","allowed":["ventas"],"denied":true},
-  {"id":"sin_acceso_ventas","question":"Resume la facturación de 2026","allowed":["adhesiva"],"denied":true}
+  {"id":"sin_acceso_ventas","question":"Resume la facturación de 2026","allowed":["adhesiva"],"denied":true},
+  {"id":"comparacion_sin_relacion","question":"Compara la facturación y el OEE de RB4","allowed":["ventas","adhesiva"],"route":"clarificacion","agent":""}
 ]

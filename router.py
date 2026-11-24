@@ -15,17 +15,19 @@ FOLLOWUP_TERMS = re.compile(r"\b(?:que\s+(?:has|hab[ií]as|hemos)\s+(?:considera
                             r"(?:puedes?\s+)?desglos[ae]r?|sobre\s+(?:eso|esto)|lo\s+anterior)\b", re.IGNORECASE)
 EXPLICIT_ADHESIVE = re.compile(r"adhesiv|\b(?:oee|robot(?:es)?|m[aá]quina\s+rb\d+|rb\d+|producci[oó]n|planta|paradas)\b", re.IGNORECASE)
 EXPLICIT_SALES = re.compile(r"\b(?:ventas?|facturaci[oó]n|clientes?|pedidos?|previsi[oó]n\s+de\s+ventas?)\b", re.IGNORECASE)
-STRONG_ADHESIVE = re.compile(r"adhesiv|\b(?:oee|paradas|m[aá]quinas?|rb\d+)\b", re.IGNORECASE)
-STRONG_SALES = re.compile(r"\b(?:ventas?|facturaci[oó]n|clientes?|pedidos?)\b", re.IGNORECASE)
 
 
-def ambiguous_agent_choices(message: str, allowed_agents: list) -> list[str]:
-    """Request a choice when one query explicitly spans both configured data domains."""
-    if requested_intent(message) in ("presentacion", "drive"):
-        return []
-    if STRONG_ADHESIVE.search(message) and STRONG_SALES.search(message):
-        return [key for key in ("ventas", "adhesiva") if key in allowed_agents]
-    return []
+def semantic_clarification(message: str) -> str | None:
+    """Block comparisons that lack a verified link between a machine and sales."""
+    machine = re.search(r"\bRB\d+\b", message, re.IGNORECASE)
+    billing = re.search(r"\b(?:facturaci[oó]n|facturad[oa]s?|ventas?)\b", message, re.IGNORECASE)
+    oee = re.search(r"\bOEE\b", message, re.IGNORECASE)
+    if machine and billing and oee:
+        return (f"{machine.group(0).upper()} es una máquina de producción. No tengo una relación verificada "
+                "entre su OEE y una facturación comercial, así que no puedo hacer esa comparación. "
+                "Puedo consultar el OEE de esa máquina, o la facturación de una referencia o cliente concreto. "
+                "Si quieres relacionarlos, indica la referencia y el periodo comunes.")
+    return None
 
 
 class AgentAccessDenied(PermissionError):
@@ -46,8 +48,6 @@ def restrict_to_allowed(plan: dict, message: str, allowed_agents: list | None, s
     chosen = plan.get("data_agent")
     if strict and (chosen not in allowed or (plan.get("route") in CATALOG and plan["route"] != chosen)):
         raise AgentAccessDenied("Tu cuenta no tiene acceso al agente solicitado.")
-    if strict and explicit and chosen != explicit:
-        raise AgentAccessDenied("El agente seleccionado no corresponde al ámbito explícito de esta consulta.")
     if explicit:
         chosen = explicit
     elif chosen not in allowed and len(allowed) == 1:

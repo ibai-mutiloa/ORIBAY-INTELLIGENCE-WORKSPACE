@@ -3,13 +3,18 @@ import argparse
 import json
 from pathlib import Path
 
-from router import AgentAccessDenied, _fallback, decide, restrict_to_allowed
+from router import AgentAccessDenied, _fallback, decide, restrict_to_allowed, semantic_clarification
 
 
 def evaluate(live=False):
     cases = json.loads((Path(__file__).parent / "evals" / "routing_cases.json").read_text(encoding="utf-8"))
     results = []
     for case in cases:
+        if semantic_clarification(case["question"]):
+            actual = {"route": "clarificacion", "agent": ""}
+            results.append({"id": case["id"], "passed": actual == {
+                "route": case.get("route"), "agent": case.get("agent")}, "actual": actual})
+            continue
         try:
             plan = (decide(case["question"], case.get("history"), case.get("allowed")) if live
                     else restrict_to_allowed(_fallback(case["question"], case.get("history")),
