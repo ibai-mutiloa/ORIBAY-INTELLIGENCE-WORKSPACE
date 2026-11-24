@@ -1,0 +1,8 @@
+steps:
+  - name: python:3.11-slim
+    entrypoint: bash
+    args:
+      - -ec
+      - |
+        pip install --quiet -r requirements.txt
+        python evaluate_router.py --live

@@ -40,6 +40,10 @@ La evaluación con un conjunto amplio de conversaciones y los criterios de incor
 
 `agents.json` define los agentes de datos registrados (ID, nombre, recurso de Conversational Analytics, descripción y ejemplos). La aplicación valida este catálogo al arrancar. Antes de decidir una ruta de datos, consulta por OAuth los agentes visibles para la cuenta conectada y envía al router solo sus fichas. La ejecución comprueba de nuevo el ID autorizado y rechaza un plan manipulado con HTTP 403; la API de Google aplica además los permisos reales del usuario. Los agentes de `agents.json` se pueden ampliar sin editar el mapa de recursos Python. Las reglas especializadas de Ventas, OEE y alertas siguen ligadas a esos dos ámbitos; antes de registrar un tercer agente hay que definir sus capacidades y añadir casos de evaluación del enrutamiento.
 
+## Evaluación del router
+
+`evals/routing_cases.json` contiene 16 casos de ruta y acceso basados en conversaciones reales. `python evaluate_router.py` comprueba las reglas sin llamadas externas; `python evaluate_router.py --live` consulta Gemini y exige que los casos permitidos no hayan caído al respaldo. Cloud Build ejecuta las pruebas unitarias con `cloudbuild-test.yaml` y puede ejecutar el modo en vivo con `cloudbuild-eval-live.yaml`. Esta batería verifica selección de ruta y permisos; no verifica todavía la exactitud de cifras devueltas por BigQuery ni el renderizado de la interfaz.
+
 ## Estado
 
 - **Ventas:** consulta real al agente y gráfico renderizado en navegador.

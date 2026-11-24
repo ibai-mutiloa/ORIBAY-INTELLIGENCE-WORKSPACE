@@ -80,6 +80,13 @@ class ConversationContextTests(unittest.TestCase):
         self.assertEqual(requested_intent("Haz un gráfico visual"), "consulta")
         self.assertEqual(_fallback("Haz un gráfico visual", history)["route"], "adhesiva")
 
+    def test_data_only_summary_cannot_become_email(self):
+        client = MagicMock()
+        client.models.generate_content.return_value.text = '{"route":"correo","data_agent":"ventas"}'
+        with patch("router.Client", return_value=client):
+            plan = decide("Resume la facturación de los últimos tres meses completos", allowed_agents=["ventas"])
+        self.assertEqual(plan["route"], "ventas")
+
     def test_structured_context_preserves_original_scope_across_followups(self):
         ref = MagicMock()
         with patch("app.conversation_message") as write:

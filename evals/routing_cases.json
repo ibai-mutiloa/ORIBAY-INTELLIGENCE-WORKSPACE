@@ -1,0 +1,18 @@
+[
+  {"id":"ventas_facturacion","question":"Resume la facturación de los últimos tres meses completos","allowed":["ventas","adhesiva"],"route":"ventas","agent":"ventas"},
+  {"id":"adhesiva_oee","question":"Muestra el OEE de RB4 en la semana 22 de 2026","allowed":["ventas","adhesiva"],"route":"adhesiva","agent":"adhesiva"},
+  {"id":"ventas_materiales","question":"Qué preveemos vender de nuestra pieza 24 en acero inoxidable y en zamak","allowed":["ventas","adhesiva"],"route":"ventas","agent":"ventas"},
+  {"id":"ventas_referencias_seguimiento","question":"Puedes desglosar las referencias que has considerado en zamak y en acero inoxidable?","history":[{"route":"ventas","question":"Qué preveemos vender de nuestra pieza 24 en acero inoxidable y en zamak","answer":"Ventas por material"}],"allowed":["ventas","adhesiva"],"route":"ventas","agent":"ventas"},
+  {"id":"ventas_top_grafico","question":"haz un gráfico visual","history":[{"route":"ventas","question":"top 5 de piezas más vendidas en 2026 frente a 2025","answer":"Top 5"}],"allowed":["ventas","adhesiva"],"route":"ventas","agent":"ventas"},
+  {"id":"adhesiva_grafico","question":"haz un gráfico visual","history":[{"route":"adhesiva","question":"OEE de RB4","answer":"54,51 %"}],"allowed":["ventas","adhesiva"],"route":"adhesiva","agent":"adhesiva"},
+  {"id":"adhesiva_pdf","question":"Explícame ese resultado y prepara un PDF solo sobre esa máquina y semana","history":[{"route":"adhesiva","question":"OEE de RB4 en la semana 22 de 2026","answer":"54,51 %"}],"allowed":["ventas","adhesiva"],"route":"pdf","agent":"adhesiva"},
+  {"id":"ventas_slides","question":"genera un Google Slides con estos datos","history":[{"route":"ventas","question":"top 5 de piezas más vendidas","answer":"Top 5"}],"allowed":["ventas","adhesiva"],"route":"presentacion","agent":"ventas"},
+  {"id":"adhesiva_slides","question":"prepara una presentación de ese OEE","history":[{"route":"adhesiva","question":"OEE de RB4","answer":"54,51 %"}],"allowed":["ventas","adhesiva"],"route":"presentacion","agent":"adhesiva"},
+  {"id":"correo_puntual","question":"Resume las ventas de AC032 de los últimos tres meses y envíame un mensaje","allowed":["ventas","adhesiva"],"route":"correo","agent":"ventas"},
+  {"id":"alerta","question":"Avísame si la facturación mensual supera 500000 euros; compruébalo cada día","allowed":["ventas","adhesiva"],"route":"alerta","agent":"ventas"},
+  {"id":"drive","question":"Busca en mi Drive el informe de ventas","allowed":["ventas","adhesiva"],"route":"drive","agent":"ventas"},
+  {"id":"cambio_a_oee","question":"Ahora desglosa su OEE en la máquina RB4","history":[{"route":"ventas","question":"Ventas de pieza 24","answer":"Datos"}],"allowed":["ventas","adhesiva"],"route":"adhesiva","agent":"adhesiva"},
+  {"id":"cambio_a_ventas","question":"Volvamos a ventas: ¿a qué clientes vendemos la pieza 191?","history":[{"route":"adhesiva","question":"OEE de RB4","answer":"Datos"}],"allowed":["ventas","adhesiva"],"route":"ventas","agent":"ventas"},
+  {"id":"sin_acceso_oee","question":"Muestra el OEE de RB4","allowed":["ventas"],"denied":true},
+  {"id":"sin_acceso_ventas","question":"Resume la facturación de 2026","allowed":["adhesiva"],"denied":true}
+]

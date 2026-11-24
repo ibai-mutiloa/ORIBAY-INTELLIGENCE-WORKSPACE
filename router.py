@@ -184,6 +184,8 @@ def decide(message: str, history: list | None = None, allowed_agents: list | Non
             config=types.GenerateContentConfig(system_instruction=SYSTEM, response_mime_type="application/json", temperature=0),
         )
         result = json.loads(response.text)
+        if result.get("route") == "consulta":
+            result["route"] = result.get("data_agent")
         if result.get("route") not in ROUTES:
             raise ValueError("Ruta desconocida")
         intent = requested_intent(message)
@@ -191,6 +193,8 @@ def decide(message: str, history: list | None = None, allowed_agents: list | Non
             result["route"] = result.get("data_agent") if result.get("data_agent") in CATALOG else "ventas"
         elif intent:
             result["route"] = intent
+        elif result["route"] not in CATALOG:
+            result["route"] = result.get("data_agent") if result.get("data_agent") in CATALOG else "ventas"
         inherited = followup_agent(message, safe_history)
         if inherited:
             result["data_agent"] = inherited
