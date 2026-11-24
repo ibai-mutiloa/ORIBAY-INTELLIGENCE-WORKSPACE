@@ -165,6 +165,21 @@ class ConversationContextTests(unittest.TestCase):
         self.assertEqual(restored["tables"], message["tables"])
         self.assertEqual(restored["sql"], message["sql"])
 
+    def test_interleaved_requests_keep_their_own_questions(self):
+        items = [
+            {"kind": "user", "turn_id": "one", "question": "Ventas de pieza 24"},
+            {"kind": "user", "turn_id": "two", "question": "OEE de RB4"},
+            {"kind": "assistant", "turn_id": "two", "route": "adhesiva", "answer": "54 %"},
+            {"kind": "assistant", "turn_id": "one", "route": "ventas", "answer": "100 €"},
+        ]
+        ref = MagicMock()
+        ref.collection.return_value.order_by.return_value.limit.return_value.stream.return_value = [
+            type("Snapshot", (), {"to_dict": lambda self, item=item: item})() for item in reversed(items)]
+        turns = conversation_recent_agent_turns(ref)
+        self.assertEqual(len(turns), 1)
+        self.assertEqual(turns[0]["question"], "Ventas de pieza 24")
+        self.assertEqual(turns[0]["answer"], "100 €")
+
     def test_missing_agent_data_cannot_become_a_pdf(self):
         self.assertTrue(missing_report_evidence({
             "answer": "No se dispone de la información necesaria. Por favor, proporcione la máquina y la semana.",

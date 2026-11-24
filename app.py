@@ -207,7 +207,7 @@ def memory_evidence(result):
     return (answer + ("\n\nTablas verificadas:\n" + "\n\n".join(tables) if tables else ""))[:8500]
 
 
-def save_conversation_result(conversation_ref, question, result):
+def save_conversation_result(conversation_ref, question, result, turn_id=""):
     answer = str(result.get("answer", ""))[:12000]
     plan = result.get("plan") or {}
     source_question = str(plan.get("followup_source") or question)[:1200]
@@ -219,7 +219,7 @@ def save_conversation_result(conversation_ref, question, result):
                "top_n": int(re.search(r"\btop\s*(\d{1,2})\b", source_question, re.IGNORECASE).group(1))
                if re.search(r"\btop\s*(\d{1,2})\b", source_question, re.IGNORECASE) else None}
     charts, tables, sql = bounded_conversation_artifacts(result)
-    conversation_message(conversation_ref, "assistant", answer=answer,
+    conversation_message(conversation_ref, "assistant", answer=answer, turn_id=turn_id,
                          route=str(result.get("route", "ventas")),
                          data_agent=str(result.get("data_agent", "ventas")),
                          title=str(plan.get("title", ""))[:180],
@@ -250,20 +250,27 @@ def conversation_recent_agent_turns(conversation_ref, max_turns=5):
                     .limit(40).stream())
     turns = []
     pending_question = ""
+    questions_by_turn = {}
     for snapshot in reversed(messages):
         item = snapshot.to_dict() or {}
         if item.get("kind") == "user":
-            pending_question = str(item.get("question", "")).strip()[:1200]
+            question_text = str(item.get("question", "")).strip()[:1200]
+            pending_question = "" if item.get("turn_id") else question_text
+            if item.get("turn_id"):
+                questions_by_turn[item["turn_id"]] = question_text
         elif item.get("kind") == "assistant":
             route = item.get("route")
             answer = str(item.get("memory_evidence") or memory_evidence(item)).strip()[:8500]
             message_agent = item.get("data_agent") or ("adhesiva" if route == "adhesiva" else "ventas")
-            if pending_question and route in (set(CATALOG) | {"pdf", "correo", "presentacion"}) and answer:
-                turns.append({"route": message_agent, "question": pending_question, "answer": answer,
+            matched_question = (questions_by_turn.get(item["turn_id"], "") if item.get("turn_id")
+                                else pending_question)
+            if matched_question and route in (set(CATALOG) | {"pdf", "correo", "presentacion"}) and answer:
+                turns.append({"route": message_agent, "question": matched_question, "answer": answer,
                               "context": item.get("context") or {}})
-            elif pending_question:
+            elif matched_question:
                 turns.append({"route": None})
-            pending_question = ""
+            if not item.get("turn_id"):
+                pending_question = ""
     if not turns or turns[-1].get("route") not in CATALOG:
         return []
     recent_agent = turns[-1]["route"]
@@ -1006,12 +1013,13 @@ def ask():
         return jsonify(error="Escribe una pregunta de 1 a 2000 caracteres."), 400
     conversation_id = str(payload.get("conversation_id", "")).strip()
     conversation_ref = None
+    turn_id = str(uuid.uuid4())
     conversation_history = []
     if conversation_id:
         conversation_ref, conversation = owned_conversation(conversation_id)
         if conversation_ref is None:
             return jsonify(error="No se encontró esta conversación."), 404
-        conversation_message(conversation_ref, "user", question=question[:2000])
+        conversation_message(conversation_ref, "user", question=question[:2000], turn_id=turn_id)
         if conversation.get("title") == "Nueva conversación":
             conversation_ref.update({"title": question[:72], "updated_at": datetime.now(timezone.utc).isoformat()})
     try:
@@ -1021,7 +1029,7 @@ def ask():
                       "steps": [{"name": "Router", "detail": "La comparación necesita una relación entre fuentes", "status": "done"}],
                       "answer": issue}
             if conversation_ref:
-                save_conversation_result(conversation_ref, question, result)
+                save_conversation_result(conversation_ref, question, result, turn_id=turn_id)
                 result["conversation_id"] = conversation_id
             return jsonify(**result)
         history = conversation_recent_agent_turns(conversation_ref, max_turns=5) if conversation_ref else []
@@ -1046,7 +1054,7 @@ def ask():
             plan["context_reference"] = original[:180]
         result = execute_and_store(question, plan, conversation_history=conversation_history)
         if conversation_ref:
-            save_conversation_result(conversation_ref, question, result)
+            save_conversation_result(conversation_ref, question, result, turn_id=turn_id)
             result["conversation_id"] = conversation_id
         return jsonify(**result)
     except AgentAccessDenied as exc:
@@ -1054,7 +1062,7 @@ def ask():
     except Exception as exc:
         app.logger.exception("Error consultando el agente de datos")
         if conversation_ref:
-            conversation_message(conversation_ref, "assistant", answer="No pude completar esta solicitud. Puedes intentarlo de nuevo.", route="error")
+            conversation_message(conversation_ref, "assistant", answer="No pude completar esta solicitud. Puedes intentarlo de nuevo.", route="error", turn_id=turn_id)
             conversation_ref.update({"updated_at": datetime.now(timezone.utc).isoformat(), "message_count": firestore.Increment(2)})
         message = str(exc) if isinstance(exc, (SalesDataUnavailable, UserBigQueryAuthError, ValueError)) else f"No se pudo consultar el agente de datos: {type(exc).__name__}"
         return jsonify(error=message), 502
