@@ -247,6 +247,10 @@ def draft_pdf_analysis(user_request: str, verified_answer: str, verified_tables:
                     "y plantas pertinentes de esa consulta; no selecciones una sola sin que lo pidan. "
                     "No afirmes que no hubo ventas en otras plantas ni atribuyas una necesidad específica "
                     "si los datos disponibles no demuestran exhaustividad o causalidad. "
+                    "La primera venta observada de una referencia no demuestra que se haya introducido "
+                    "ese año ni que haya causado una expansión geográfica; expresa solo lo observado. "
+                    "Evita llamar incremento o reducción interanual a comparar un ejercicio completo "
+                    "con otro en curso; muestra las cifras y explica que no son periodos equivalentes. "
                     "No menciones el modelo, IA, SQL ni que estás redactando. Evita repetir cifras y no añadas "
                     "conclusiones genéricas. Conserva nombres de métricas y filtros tal como aparecen en la fuente."
                 ),

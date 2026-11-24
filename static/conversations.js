@@ -11,6 +11,7 @@
   let activeTitle = '';
   let salesHistory = [];
   let accessibleAgents = [];
+  const chartLocale = { decimal: ',', thousands: '.', grouping: [3], currency: ['', ' €'] };
 
   function formattedAnswer(value) {
     const root = make('div', 'answer');
@@ -150,7 +151,7 @@
     const visual = spec?.mark || String(spec?.$schema || '').includes('vega-lite')
       ? { ...spec, width: Math.max(Number(spec.width) || 0, 620), height: Math.max(Number(spec.height) || 0, 300) }
       : spec;
-    await vegaEmbed(host, visual, { actions: false, renderer: 'svg' });
+    await vegaEmbed(host, visual, { actions: false, renderer: 'svg', formatLocale: chartLocale });
   }
 
   async function refreshHistory() {
