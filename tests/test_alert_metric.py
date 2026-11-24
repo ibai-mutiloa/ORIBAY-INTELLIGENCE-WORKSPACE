@@ -8,7 +8,7 @@ class AlertMetricTests(unittest.TestCase):
         question = alert_question({"alert_metric": "facturación", "alert_period": "mensual"})
         self.assertIn("mes natural en curso", question)
         self.assertIn("fecha más reciente con datos", question)
-        self.assertIn("No incluyas unidades vendidas", question)
+        self.assertIn("No incluyas series, unidades vendidas", question)
 
     def test_selects_requested_billing_column_from_row_with_units(self):
         table = (
