@@ -99,6 +99,14 @@ class ConversationContextTests(unittest.TestCase):
             plan = decide("Resume la facturación de los últimos tres meses completos", allowed_agents=["ventas"])
         self.assertEqual(plan["route"], "ventas")
 
+    def test_unknown_gemini_route_uses_valid_data_agent(self):
+        client = MagicMock()
+        client.models.generate_content.return_value.text = '{"route":"ventas_oribay","data_agent":"ventas"}'
+        with patch("router.Client", return_value=client):
+            plan = decide("Desglosa la facturación de AC032 en 2026", allowed_agents=["ventas", "adhesiva"])
+        self.assertEqual((plan["route"], plan["data_agent"], plan["router_mode"]),
+                         ("ventas", "ventas", "Gemini"))
+
     def test_structured_context_preserves_original_scope_across_followups(self):
         ref = MagicMock()
         with patch("app.conversation_message") as write:

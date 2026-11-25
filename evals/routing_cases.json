@@ -15,5 +15,15 @@
   {"id":"cambio_a_ventas","question":"Volvamos a ventas: ¿a qué clientes vendemos la pieza 191?","history":[{"route":"adhesiva","question":"OEE de RB4","answer":"Datos"}],"allowed":["ventas","adhesiva"],"route":"ventas","agent":"ventas"},
   {"id":"sin_acceso_oee","question":"Muestra el OEE de RB4","allowed":["ventas"],"denied":true},
   {"id":"sin_acceso_ventas","question":"Resume la facturación de 2026","allowed":["adhesiva"],"denied":true},
-  {"id":"comparacion_sin_relacion","question":"Compara la facturación y el OEE de RB4","allowed":["ventas","adhesiva"],"route":"clarificacion","agent":""}
+  {"id":"comparacion_sin_relacion","question":"Compara la facturación y el OEE de RB4","allowed":["ventas","adhesiva"],"route":"clarificacion","agent":""},
+  {"id":"oee_a_ventas_nuevo_tema","question":"Ahora muestra las ventas de la pieza 191","history":[{"route":"adhesiva","question":"OEE de RB4 semana 22 de 2026","answer":"54,51 %"}],"allowed":["ventas","adhesiva"],"route":"ventas","agent":"ventas","context":false},
+  {"id":"oee_a_pieza_sin_metrica","question":"Muestra la pieza 191","history":[{"route":"adhesiva","question":"OEE de RB4","answer":"54,51 %"}],"allowed":["ventas","adhesiva"],"route":"ventas","agent":"ventas","context":false},
+  {"id":"ventas_referencias_heredadas","question":"Desglosa esas referencias por cliente","history":[{"route":"ventas","question":"Ahora muestra las ventas de la pieza 191","answer":"191EVR y 191EVRB0D06"}],"allowed":["ventas","adhesiva"],"route":"ventas","agent":"ventas","context":true},
+  {"id":"ventas_ahora_otra_pieza","question":"Ahora muestra las ventas de la pieza 24","history":[{"route":"ventas","question":"Ventas de pieza 191","answer":"Datos"}],"allowed":["ventas","adhesiva"],"route":"ventas","agent":"ventas","context":false},
+  {"id":"ventas_desglose_independiente","question":"Desglosa la facturación de AC032 en 2026","history":[{"route":"ventas","question":"Facturación de pieza 191","answer":"Datos"}],"allowed":["ventas","adhesiva"],"route":"ventas","agent":"ventas","context":false},
+  {"id":"oee_pregunta_independiente","question":"Amplía el análisis de OEE de RB4 en la semana 22","history":[{"route":"ventas","question":"Facturación de pieza 191","answer":"Datos"}],"allowed":["ventas","adhesiva"],"route":"adhesiva","agent":"adhesiva","context":false},
+  {"id":"ventas_mismo_top_grafico","question":"Haz un gráfico visual","history":[{"route":"ventas","question":"Top 5 de piezas vendidas en 2026","answer":"Cinco piezas"}],"allowed":["ventas","adhesiva"],"route":"ventas","agent":"ventas","context":true},
+  {"id":"ventas_cambio_ano","question":"Y en 2025?","history":[{"route":"ventas","question":"Ventas de pieza 191 en 2026","answer":"Datos"}],"allowed":["ventas","adhesiva"],"route":"ventas","agent":"ventas","context":true},
+  {"id":"adhesiva_cambio_ano","question":"Y en 2025?","history":[{"route":"adhesiva","question":"OEE de RB4 en 2026","answer":"Datos"}],"allowed":["ventas","adhesiva"],"route":"adhesiva","agent":"adhesiva","context":true},
+  {"id":"ventas_pdf_referencial","question":"Prepara un PDF de ese resultado","history":[{"route":"ventas","question":"Ventas de pieza 191","answer":"Datos"}],"allowed":["ventas","adhesiva"],"route":"pdf","agent":"ventas","context":true}
 ]

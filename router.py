@@ -16,7 +16,7 @@ FOLLOWUP_TERMS = re.compile(r"\b(?:que\s+(?:has|hab[ií]as|hemos)\s+(?:considera
                             r"sobre\s+(?:eso|esto)|lo\s+anterior)\b", re.IGNORECASE)
 CONTEXT_REFERENCE = re.compile(
     r"\b(?:[eé]st[aeos]|es[aeos]|aqu[eé]ll[ao]s?|lo\s+anterior|antes|"
-    r"mismo\s+(?:cliente|periodo|an[aá]lisis)|[uú]ltima\s+consulta|"
+    r"mismo\s+(?:cliente|periodo|an[aá]lisis)|[uú]ltima\s+consulta|y\s+en\s+20\d{2}|"
     r"(?:haz|crea|genera|muestra)\s+(?:un\s+)?gr[aá]fic[oa](?:\s+visual)?\s*$)\b",
     re.IGNORECASE)
 EXPLICIT_ADHESIVE = re.compile(r"adhesiv|\b(?:oee|robot(?:es)?|m[aá]quina\s+rb\d+|rb\d+|producci[oó]n|planta|paradas)\b", re.IGNORECASE)
@@ -206,7 +206,13 @@ def decide(message: str, history: list | None = None, allowed_agents: list | Non
         if result.get("route") == "consulta":
             result["route"] = result.get("data_agent")
         if result.get("route") not in ROUTES:
-            raise ValueError("Ruta desconocida")
+            intent = requested_intent(message)
+            if intent in ROUTES:
+                result["route"] = intent
+            elif result.get("data_agent") in CATALOG:
+                result["route"] = result["data_agent"]
+            else:
+                raise ValueError("Ruta desconocida")
         intent = requested_intent(message)
         if intent == "consulta":
             result["route"] = result.get("data_agent") if result.get("data_agent") in CATALOG else "ventas"

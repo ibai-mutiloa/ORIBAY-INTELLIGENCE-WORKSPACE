@@ -46,7 +46,7 @@ La evaluación con un conjunto amplio de conversaciones y los criterios de incor
 
 ## Evaluación del router
 
-`evals/routing_cases.json` contiene 17 casos de ruta, alcance y acceso basados en conversaciones reales. `python evaluate_router.py` comprueba las reglas sin llamadas externas; `python evaluate_router.py --live` consulta Gemini y exige que los casos permitidos no hayan caído al respaldo. Cloud Build ejecuta las pruebas unitarias con `cloudbuild-test.yaml` y puede ejecutar el modo en vivo con `cloudbuild-eval-live.yaml`. Esta batería verifica selección de ruta y permisos; no verifica todavía la exactitud de cifras devueltas por BigQuery ni el renderizado de la interfaz.
+`evals/routing_cases.json` contiene 27 casos de ruta, agente, herencia de contexto y acceso basados en conversaciones reales. `python evaluate_router.py` comprueba las reglas sin llamadas externas; `python evaluate_router.py --live` consulta Gemini y exige que los casos permitidos no hayan caído al respaldo. `--case ID` permite repetir un fallo concreto. Cloud Build ejecuta las pruebas unitarias con `cloudbuild-test.yaml` y puede ejecutar el modo en vivo con `cloudbuild-eval-live.yaml`. Esta batería verifica selección de ruta, contexto y permisos; no verifica todavía la exactitud de cifras devueltas por BigQuery ni el renderizado de la interfaz.
 
 Las solicitudes que intentan comparar facturación comercial con el OEE de una máquina RB sin una relación verificada se detienen antes de consultar un agente. El hub pide una referencia y un periodo comunes, o que el usuario consulte cada ámbito por separado. No muestra un selector de agente para resolver una comparación sin base de datos común.
 
