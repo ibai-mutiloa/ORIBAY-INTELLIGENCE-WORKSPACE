@@ -12,7 +12,13 @@ ROUTES = set(CATALOG) | {"alerta", "pdf", "correo", "drive", "presentacion"}
 ADHESIVE_TERMS = re.compile(r"adhesiv|\b(?:oee|robot(?:es)?|m[aá]quinas?|rb\d+|balanceo|balanceios|producci[oó]n|rendimiento|paradas|te[oó]ricos?|turnos?|calidad)\b", re.IGNORECASE)
 FOLLOWUP_TERMS = re.compile(r"\b(?:que\s+(?:has|hab[ií]as|hemos)\s+(?:considerado|usado|visto|analizado)|"
                             r"(?:referencias?|piezas?|datos|resultados?)\s+(?:que\s+)?(?:has|hemos)\s+(?:considerado|visto|usado)|"
-                            r"(?:puedes?\s+)?desglos[ae]r?|sobre\s+(?:eso|esto)|lo\s+anterior)\b", re.IGNORECASE)
+                            r"desglos[ae]\s+(?:es[aeo]s?|aquellos|las\s+(?:referencias?|piezas?)\s+que\s+(?:has|hemos))|"
+                            r"sobre\s+(?:eso|esto)|lo\s+anterior)\b", re.IGNORECASE)
+CONTEXT_REFERENCE = re.compile(
+    r"\b(?:[eé]st[aeos]|es[aeos]|aqu[eé]ll[ao]s?|lo\s+anterior|antes|"
+    r"mismo\s+(?:cliente|periodo|an[aá]lisis)|[uú]ltima\s+consulta|"
+    r"(?:haz|crea|genera|muestra)\s+(?:un\s+)?gr[aá]fic[oa](?:\s+visual)?\s*$)\b",
+    re.IGNORECASE)
 EXPLICIT_ADHESIVE = re.compile(r"adhesiv|\b(?:oee|robot(?:es)?|m[aá]quina\s+rb\d+|rb\d+|producci[oó]n|planta|paradas)\b", re.IGNORECASE)
 EXPLICIT_SALES = re.compile(r"\b(?:ventas?|facturaci[oó]n|clientes?|pedidos?|previsi[oó]n\s+de\s+ventas?)\b", re.IGNORECASE)
 
@@ -86,7 +92,7 @@ def followup_agent(message: str, history: list | None) -> str | None:
     """A referential follow-up stays with its previous data agent unless it explicitly switches domain."""
     previous = next((item for item in reversed(history or []) if isinstance(item, dict)
                      and (item.get("route") or item.get("data_agent")) in CATALOG), None)
-    if not previous or not FOLLOWUP_TERMS.search(message):
+    if not previous or not (FOLLOWUP_TERMS.search(message) or CONTEXT_REFERENCE.search(message)):
         return None
     prior_agent = previous.get("route") or previous.get("data_agent")
     if prior_agent == "ventas" and EXPLICIT_ADHESIVE.search(message):
@@ -143,7 +149,7 @@ No afirmes que hayas consultado datos ni ejecutado herramientas."""
 def _fallback(message: str, history: list | None = None) -> dict:
     lower = message.lower()
     data_agent = "adhesiva" if ADHESIVE_TERMS.search(lower) else "ventas"
-    if data_agent == "ventas" and not re.search(r"ventas?|factur|clientes?|importes?|pedido", lower):
+    if data_agent == "ventas" and (FOLLOWUP_TERMS.search(message) or CONTEXT_REFERENCE.search(message)):
         previous = next((item for item in reversed(history or []) if isinstance(item, dict) and item.get("route") in CATALOG), None)
         if previous:
             data_agent = previous["route"]
@@ -213,7 +219,9 @@ def decide(message: str, history: list | None = None, allowed_agents: list | Non
             result["data_agent"] = inherited
             if result["route"] in CATALOG:
                 result["route"] = inherited
-        if intent == "consulta" and safe_history and not (EXPLICIT_ADHESIVE.search(message) or EXPLICIT_SALES.search(message)):
+        if (intent == "consulta" and safe_history and
+                (FOLLOWUP_TERMS.search(message) or CONTEXT_REFERENCE.search(message)) and
+                not (EXPLICIT_ADHESIVE.search(message) or EXPLICIT_SALES.search(message))):
             result["route"] = safe_history[-1]["data_agent"]
         if result["route"] in CATALOG:
             result["data_agent"] = result["route"]

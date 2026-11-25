@@ -295,7 +295,7 @@ def needs_previous_turn(question):
     return bool(re.search(
         r"\b(?:[eé]st[aeos]|es[aeos]|aqu[eé]ll[ao]s?|anteriores?|[uú]ltim[ao]s?\s+consultas?|"
         r"lo\s+anterior|mismo\s+(?:cliente|periodo|an[aá]lisis)|"
-        r"ahora|siguiendo|contin[uú]a|desglosa|ampl[ií]a|sobre\s+eso|"
+        r"siguiendo|contin[uú]a|sobre\s+eso|"
         r"vimos\s+antes|estos\s+datos|esas\s+cifras|ese\s+top|"
         r"(?:haz|crea|genera)\s+(?:un\s+)?gr[aá]fico(?:\s+visual)?)\b",
         question, re.IGNORECASE))

@@ -36,6 +36,8 @@ El router separa la intención de herramienta (`consulta`, `pdf`, `presentacion`
 
 Los mensajes guardan también las tablas, gráficos y consultas SQL para recuperarlos al abrir de nuevo el chat. La memoria del agente usa la respuesta analítica original y extractos de tablas, incluso cuando el resultado visible es un PDF o una presentación. Los ajustes explícitos de alcance, como «solo en España», se mantienen en las siguientes preguntas del mismo agente. Los artefactos se limitan a 500 KB por mensaje; los gráficos más grandes pueden omitirse del historial. La memoria se restringe al tramo consecutivo del mismo agente y no pasa de Ventas a Producción ni viceversa.
 
+Para heredar contexto se exige una referencia al resultado previo. «Ahora muestra las ventas de la pieza 191» y «Desglosa la facturación de AC032 en 2026» inician una consulta nueva; «desglosa esas referencias» conserva el agente y el alcance del turno anterior. El respaldo del router y la corrección de la ruta propuesta por Gemini aplican la misma distinción.
+
 La evaluación con un conjunto amplio de conversaciones y los criterios de incorporación de nuevos agentes quedan para la siguiente fase.
 
 ## Catálogo y autorización de agentes (piloto)

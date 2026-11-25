@@ -10,6 +10,16 @@ from router import decide, followup_agent, requested_intent, _fallback
 class ConversationContextTests(unittest.TestCase):
     def test_independent_sales_question_does_not_inherit_previous_analysis(self):
         self.assertFalse(needs_previous_turn("¿A qué plantas de Saint-Gobain vendemos la pieza 191?"))
+        self.assertFalse(needs_previous_turn("Ahora muestra las ventas de la pieza 191"))
+        self.assertFalse(needs_previous_turn("Desglosa la facturación de AC032 en 2026"))
+        self.assertFalse(needs_previous_turn("Amplía el análisis de OEE de RB4 en la semana 22"))
+
+    def test_new_topic_does_not_inherit_previous_agent(self):
+        history = [{"route": "adhesiva", "question": "OEE de RB4", "answer": "54 %"}]
+        self.assertEqual(_fallback("Muestra la pieza 191", history)["data_agent"], "ventas")
+        self.assertIsNone(followup_agent("Ahora muestra las ventas de la pieza 191", history))
+        self.assertEqual(_fallback("Ahora muestra las ventas de la pieza 191", history)["route"], "ventas")
+        self.assertEqual(followup_agent("Desglosa esas referencias", history), "adhesiva")
 
     def test_last_query_pdf_uses_only_matching_section(self):
         question = "Genera un PDF solo con las piezas de Saint-Gobain de la última consulta"
