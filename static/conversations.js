@@ -10,6 +10,40 @@
   let activeId = null;
   let activeTitle = '';
   let accessibleAgents = [];
+  let agentCatalog = [];
+  let agentMode = localStorage.getItem('oribay-agent-mode') === 'manual' ? 'manual' : 'auto';
+  const modeButton = document.createElement('button');
+  modeButton.type = 'button';
+  modeButton.className = 'agent-mode-button';
+  modeButton.setAttribute('aria-label', 'Cambiar selección de agentes');
+  const mentionMenu = document.createElement('div');
+  mentionMenu.className = 'agent-mention-menu';
+  mentionMenu.hidden = true;
+  const composerFooter = document.querySelector('.composer footer');
+  composerFooter?.prepend(modeButton, mentionMenu);
+  function renderAgentMode() {
+    modeButton.textContent = agentMode === 'auto' ? '✦ Agentes: automático' : '@ Agentes: manual';
+    modeButton.setAttribute('aria-pressed', String(agentMode === 'manual'));
+    workspaceInput.placeholder = agentMode === 'manual'
+      ? 'Empieza con @ventas o elige un agente…'
+      : 'Pregunta por ventas, OEE o pide una acción…';
+    mentionMenu.hidden = agentMode !== 'manual' || !agentCatalog.length;
+    mentionMenu.replaceChildren();
+    for (const item of agentCatalog) {
+      const button = make('button', 'agent-mention-option', `@${item.id} · ${item.name}`);
+      button.type = 'button';
+      button.addEventListener('click', () => {
+        workspaceInput.value = `@${item.id} ${workspaceInput.value.replace(/^\s*@[a-z0-9_-]+\s*/i, '')}`;
+        workspaceInput.focus();
+      });
+      mentionMenu.append(button);
+    }
+  }
+  modeButton.addEventListener('click', () => {
+    agentMode = agentMode === 'auto' ? 'manual' : 'auto';
+    localStorage.setItem('oribay-agent-mode', agentMode);
+    renderAgentMode();
+  });
   const chartLocale = { decimal: ',', thousands: '.', grouping: [3], currency: ['', ' €'] };
 
   function formattedAnswer(value) {
@@ -82,7 +116,9 @@
     try {
       const data = await api('/api/agents/available');
       accessibleAgents = Array.isArray(data.agents) ? data.agents : [];
+      agentCatalog = Array.isArray(data.catalog) ? data.catalog : [];
     } catch { accessibleAgents = []; }
+    renderAgentMode();
     if (!activeId && !workspaceChat.hidden && workspaceChat.querySelector('#intro')) showWelcome();
   }
 
@@ -357,6 +393,13 @@
     event.preventDefault();
     const question = workspaceInput.value.trim();
     if (!question) return;
+    if (agentMode === 'manual' && !/^@[a-z][a-z0-9_-]+(?:\s|$)/i.test(question)) {
+      workspaceInput.focus();
+      workspaceInput.setCustomValidity('Elige un agente con @ antes de enviar.');
+      workspaceInput.reportValidity();
+      return;
+    }
+    workspaceInput.setCustomValidity('');
     document.querySelector('#intro')?.remove();
     workspaceChat.append(make('div', 'msg user', question));
     workspaceInput.value = '';
@@ -375,7 +418,7 @@
         titleElement.textContent = activeTitle;
       }
       await refreshHistory();
-      const data = await sendJson('/api/ask', { question, conversation_id: activeId });
+      const data = await sendJson('/api/ask', { question, conversation_id: activeId, agent_mode: agentMode });
       run.replaceChildren();
       const stepIcons = { Router: '✦', Regla: '◷', 'Ventas Oribay': '▥', 'Aplicación Adhesiva': '▥', PDF: '▤', 'Google Slides': serviceIcon('drive'), Gmail: serviceIcon('gmail'), Drive: serviceIcon('drive') };
       const completedSteps = data.steps?.length ? data.steps : [{ name: 'Router', detail: `Ruta elegida: ${data.route}`, status: 'done' }];
@@ -430,6 +473,8 @@
       if (!workspaceSend.disabled) workspaceForm.requestSubmit();
     }
   });
+  workspaceInput.addEventListener('input', () => workspaceInput.setCustomValidity(''));
+  renderAgentMode();
 
   newChatButton.addEventListener('click', startNewChat);
   document.querySelector('nav [data-view="space"]')?.addEventListener('click', () => { void summarizeOnLeave(); });

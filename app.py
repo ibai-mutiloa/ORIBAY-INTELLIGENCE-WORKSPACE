@@ -38,6 +38,7 @@ from user_data_auth import drive_is_connected
 import drive_tools
 from presentations import create_presentation
 from agent_catalog import CATALOG
+from agent_mentions import select_agent
 
 app = Flask(__name__)
 PROJECT = "aad-analitica-oee"
@@ -919,7 +920,9 @@ def conversations_list():
 @app.get("/api/agents/available")
 def available_agents():
     try:
-        return jsonify(agents=allowed_data_agents())
+        allowed = allowed_data_agents()
+        return jsonify(agents=allowed, catalog=[{"id": key, "name": item["name"]}
+                                                for key, item in CATALOG.items() if key in allowed])
     except Exception:
         app.logger.warning("No se pudo descubrir los agentes del usuario", exc_info=True)
         return jsonify(agents=[], error="No se pudieron comprobar los agentes disponibles.")
@@ -1011,6 +1014,15 @@ def ask():
     question = str(payload.get("question", "")).strip()
     if not 1 <= len(question) <= 2000:
         return jsonify(error="Escribe una pregunta de 1 a 2000 caracteres."), 400
+    mode = str(payload.get("agent_mode", "auto"))
+    try:
+        explicit_agent = re.match(r"^\s*@([a-z][a-z0-9_-]{1,39})(?=\s|$)", question, re.IGNORECASE)
+        selected_agent, clean_question = select_agent(question, mode, CATALOG,
+                                                      allowed_data_agents() if explicit_agent else [])
+    except PermissionError as exc:
+        return jsonify(error=str(exc)), 403
+    except ValueError as exc:
+        return jsonify(error=str(exc)), 400
     conversation_id = str(payload.get("conversation_id", "")).strip()
     conversation_ref = None
     turn_id = str(uuid.uuid4())
@@ -1023,7 +1035,7 @@ def ask():
         if conversation.get("title") == "Nueva conversación":
             conversation_ref.update({"title": question[:72], "updated_at": datetime.now(timezone.utc).isoformat()})
     try:
-        issue = semantic_clarification(question)
+        issue = semantic_clarification(clean_question)
         if issue:
             result = {"route": "clarificacion", "data_agent": "", "plan": {"router_mode": "alcance"},
                       "steps": [{"name": "Router", "detail": "La comparación necesita una relación entre fuentes", "status": "done"}],
@@ -1034,25 +1046,34 @@ def ask():
             return jsonify(**result)
         history = conversation_recent_agent_turns(conversation_ref, max_turns=5) if conversation_ref else []
         if history:
-            history = [{**turn, "answer": focused_prior_answer(question, turn["answer"])} for turn in history]
-        allowed = None if requested_intent(question) == "drive" else allowed_data_agents()
-        plan = decide(question, history, allowed_agents=allowed)
-        source = followup_source(question, history) if needs_previous_turn(question) else None
+            history = [{**turn, "answer": focused_prior_answer(clean_question, turn["answer"])} for turn in history]
+        if selected_agent:
+            history = [turn for turn in history if turn["route"] == selected_agent]
+        allowed = [selected_agent] if selected_agent else (None if requested_intent(clean_question) == "drive" else allowed_data_agents())
+        plan = decide(clean_question, history, allowed_agents=allowed)
+        if selected_agent:
+            plan["data_agent"] = selected_agent
+            if plan["route"] in CATALOG:
+                plan["route"] = selected_agent
+            plan["router_mode"] = f"Manual @{selected_agent}"
+        source = followup_source(clean_question, history) if needs_previous_turn(clean_question) else None
         if source and source["route"] == plan.get("data_agent", "ventas"):
             original = source["question"]
-            plan["data_question"] = (f"Resuelve la petición actual: {question}. Su referencia es esta consulta anterior: "
+            plan["data_question"] = (f"Resuelve la petición actual: {clean_question}. Su referencia es esta consulta anterior: "
                                      f"{original}. Conserva exactamente su alcance, periodo, filtros y número de resultados "
                                      "salvo que la petición actual los cambie explícitamente. Si pide un gráfico, "
                                      "devuelve un gráfico de esos mismos resultados y su tabla de respaldo. "
                                      "No cambies un top 5 por un top 10.")[:2000]
-            plan["followup_source"] = updated_scope(original, question)
+            plan["followup_source"] = updated_scope(original, clean_question)
             conversation_history = [
                 {"userMessage": {"text": original}},
                 {"systemMessage": {"text": {"parts": [source["answer"]]}}},
             ]
             plan["context_used"] = True
             plan["context_reference"] = original[:180]
-        result = execute_and_store(question, plan, conversation_history=conversation_history)
+        if selected_agent:
+            plan.setdefault("data_question", clean_question)
+        result = execute_and_store(clean_question, plan, conversation_history=conversation_history)
         if conversation_ref:
             save_conversation_result(conversation_ref, question, result, turn_id=turn_id)
             result["conversation_id"] = conversation_id
