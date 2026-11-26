@@ -20,10 +20,12 @@
   mentionMenu.className = 'agent-mention-menu';
   mentionMenu.hidden = true;
   const composerFooter = document.querySelector('.composer footer');
-  composerFooter?.prepend(modeButton, mentionMenu);
+  composerFooter?.before(mentionMenu);
+  composerFooter?.prepend(modeButton);
   function renderAgentMode() {
     modeButton.textContent = agentMode === 'auto' ? '✦ Agentes: automático' : '@ Agentes: manual';
     modeButton.setAttribute('aria-pressed', String(agentMode === 'manual'));
+    composerFooter?.classList.toggle('manual-agent-mode', agentMode === 'manual');
     workspaceInput.placeholder = agentMode === 'manual'
       ? 'Empieza con @ventas o elige un agente…'
       : 'Pregunta por ventas, OEE o pide una acción…';

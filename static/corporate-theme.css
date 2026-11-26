@@ -115,9 +115,10 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
   main>header span { display: none; }
   .prompts { grid-template-columns: 1fr; }
 }
-.agent-mode-button { border: 1px solid #b7c9e5; border-radius: 8px; background: #fff; color: #07357a; padding: 7px 10px; cursor: pointer; font: inherit; }
-.agent-mode-button[aria-pressed="true"] { background: #e7efff; border-color: #1754ab; }
-.agent-mention-menu { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 10px; }
+.composer form button.agent-mode-button { border: 1px solid #b7c9e5; border-radius: 7px; background: #fff; color: #07357a; padding: 6px 10px; cursor: pointer; font-size: 12px; line-height: 1.2; white-space: nowrap; }
+.composer form button.agent-mode-button:hover, .composer form button.agent-mode-button[aria-pressed="true"] { background: #e7efff; color: #07357a; border-color: #1754ab; }
+.composer footer.manual-agent-mode > span { display: none; }
+.agent-mention-menu { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 8px; }
 .agent-mention-menu[hidden] { display: none; }
-.agent-mention-option { border: 1px solid #c5d5ee; border-radius: 7px; background: #fff; color: #07357a; padding: 5px 8px; cursor: pointer; font: inherit; }
-.agent-mention-option:hover, .agent-mention-option:focus-visible { background: #e7efff; }
+.composer form button.agent-mention-option { border: 1px solid #c5d5ee; border-radius: 7px; background: #f5f8fd; color: #07357a; padding: 5px 8px; cursor: pointer; font-size: 12px; line-height: 1.2; }
+.composer form button.agent-mention-option:hover, .composer form button.agent-mention-option:focus-visible { background: #e7efff; color: #07357a; }
